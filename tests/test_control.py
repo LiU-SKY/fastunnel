@@ -149,8 +149,8 @@ class FakeActions(ControlActions):
         self.calls.append("restart")
         return "다시 엽니다"
 
-    def open(self, ports):
-        self.calls.append("open:%s" % ports)
+    def open(self, ports, proto=""):
+        self.calls.append("open:%s%s" % (ports, ("/" + proto) if proto else ""))
         return "포트 %s 로 다시 엽니다" % ports
 
     def shutdown(self):
@@ -207,6 +207,9 @@ def run() -> bool:
     r.check("열기 인자 전달", ctl_admin.handle(msg("!ft 열기 8000-8005")) == "포트 8000-8005 로 다시 엽니다")
     r.check("열기 인자 없으면 안내", "포트를 함께" in ctl_admin.handle(msg("!ft 열기")))
     r.check("동작 호출 기록", "open:8000-8005" in actions.calls)
+    # 접두사 명령에서도 뒤에 프로토콜을 붙일 수 있다
+    ctl_admin.handle(msg("!ft 열기 25565 tcp"))
+    r.check("접두사 프로토콜 파싱", "open:25565/tcp" in actions.calls, str(actions.calls[-1:]))
 
     # ---------------- 실제 폴링 루프 ----------------
     port = free_port(9700)

@@ -2,7 +2,7 @@
 
 명령을 받는 길이 두 개다.
 
-1. **슬래시 명령 `/fastunnel …`** (권장) — `slash.py` + `gateway.py`.
+1. **슬래시 명령 `/ft …`** (권장) — `slash.py` + `gateway.py`.
    인텐트가 필요 없어서 설정만 맞으면 바로 동작한다.
 2. **접두사 명령 `!ft …`** — 이 파일의 채널 폴링(`discord_poll`, 기본 3초).
    **MESSAGE CONTENT INTENT 가 켜져 있어야 한다.** 꺼져 있으면 메시지 내용이 빈 문자열로
@@ -45,7 +45,7 @@ HELP_TEXT = (
     "`{p} 상태` — 지금 열려 있는 터널 목록\n"
     "`{p} 주소` — 공개 주소만 다시 보기\n"
     "`{p} 재시작` — 터널을 다시 열기 (주소가 바뀝니다) *관리자*\n"
-    "`{p} 열기 8000-8005` — 지정한 포트로 다시 열기 *관리자*\n"
+    "`{p} 열기 8000-8005 tcp` — 지정한 포트/프로토콜로 다시 열기 *관리자*\n"
     "`{p} 종료` — 터널을 닫고 프로그램 종료 *관리자*\n"
     "`{p} 도움말` — 이 도움말"
 )
@@ -66,7 +66,7 @@ class ControlActions:
     def restart(self) -> str:
         return "이 실행 방식에서는 재시작 명령을 지원하지 않습니다."
 
-    def open(self, ports: str) -> str:  # noqa: ARG002
+    def open(self, ports: str, proto: str = "") -> str:  # noqa: ARG002
         return "이 실행 방식에서는 포트 변경 명령을 지원하지 않습니다."
 
     def shutdown(self) -> str:
@@ -205,7 +205,7 @@ class DiscordControl:
             "`%s` 접두사 명령은 동작하지 않습니다." % self.prefix
         )
         if self.use_slash:
-            util.info("  슬래시 명령 %s 을 쓰세요. 인텐트 없이 동작합니다." % util.bold("/fastunnel"))
+            util.info("  슬래시 명령 %s 을 쓰세요. 인텐트 없이 동작합니다." % util.bold("/ft"))
         else:
             util.info("  Developer Portal → Bot → MESSAGE CONTENT INTENT 를 켜세요.")
 
@@ -335,6 +335,13 @@ class DiscordControl:
         parts = rest.split(None, 1)
         name = ALIASES.get(parts[0].lower())
         args = parts[1].strip() if len(parts) > 1 else ""
+        # `열기 25565 tcp` 처럼 뒤에 프로토콜을 붙일 수 있게 한다
+        proto = ""
+        if name == "open" and args:
+            bits = args.split()
+            if len(bits) > 1 and bits[-1].lower() in ("tcp", "http", "https"):
+                proto = bits[-1].lower()
+                args = " ".join(bits[:-1])
         if not name:
             return "모르는 명령입니다: `%s`\n%s" % (
                 parts[0][:40], HELP_TEXT.format(p=self.prefix)
@@ -343,7 +350,7 @@ class DiscordControl:
         if name in MUTATING and not self._allowed(author_id):
             return self.deny_text(parts[0], author_id)
 
-        return self.run_action(name, args)
+        return self.run_action(name, args, proto)
 
     def deny_text(self, typed: str, author_id: str) -> str:
         """권한이 없을 때 보여 줄 안내. 접두사 명령과 슬래시 명령이 같이 쓴다."""
@@ -362,7 +369,7 @@ class DiscordControl:
             return True
         return self.is_guild_admin(author_id)
 
-    def run_action(self, name: str, args: str) -> str:
+    def run_action(self, name: str, args: str, proto: str = "") -> str:
         try:
             if name == "help":
                 return HELP_TEXT.format(p=self.prefix)
@@ -377,7 +384,7 @@ class DiscordControl:
             if name == "open":
                 if not args:
                     return "포트를 함께 적어 주세요. 예: `%s 열기 8000-8005`" % self.prefix
-                return self.actions.open(args)
+                return self.actions.open(args, proto)
         except Exception as exc:  # noqa: BLE001 - 명령 하나가 실패해도 수신은 계속되어야 한다
             util.debug("명령 처리 오류(%s): %s" % (name, exc))
             return "명령을 처리하지 못했습니다: %s" % str(exc)[:150]

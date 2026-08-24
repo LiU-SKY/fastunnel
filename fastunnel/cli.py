@@ -219,27 +219,37 @@ class _RunActions(control_mod.ControlActions):
         return control_mod.format_tunnels(session.tunnels, only_address=True)
 
     def restart(self) -> str:
-        self.requests.put(("restart", ""))
+        self.requests.put(("restart", "", ""))
         return "터널을 다시 엽니다. 주소가 바뀌니 잠시 뒤 새 주소를 알려 드릴게요."
 
-    def open(self, ports: str) -> str:
+    def open(self, ports: str, proto: str = "") -> str:
         try:
             parsed = util.parse_ports(ports)
         except util.PortSpecError as exc:
             return "포트를 해석할 수 없습니다: %s" % exc
-        self.requests.put(("open", util.format_ranges(parsed)))
-        return "포트 `%s` 로 다시 엽니다. 잠시만요." % util.format_ranges(parsed)
+        proto = (proto or "").lower()
+        if proto and proto not in ("tcp", "http", "https"):
+            return "프로토콜은 tcp / http / https 중 하나여야 합니다."
+        spec = util.format_ranges(parsed)
+        self.requests.put(("open", spec, proto))
+        label = "%s %s" % (proto.upper(), spec) if proto else spec
+        return "`%s` 로 다시 엽니다. 잠시만요." % label
 
     def shutdown(self) -> str:
-        self.requests.put(("stop", ""))
+        self.requests.put(("stop", "", ""))
         return "터널을 닫고 종료합니다."
 
 
-def _reopen(session, cfg, ports: str, extra_args: str):
-    """실행 중인 세션을 닫고 (필요하면 다른 포트로) 새로 연다."""
+def _reopen(session, cfg, ports: str, proto: str, extra_args: str):
+    """실행 중인 세션을 닫고 (필요하면 다른 포트/프로토콜로) 새로 연다."""
     session.stop(notify=False)
-    if ports:
-        cfg = config_mod.from_dict(dict(cfg.data, ports=ports), list(cfg.sources) + ["디스코드 명령"])
+    if ports or proto:
+        changed = dict(cfg.data)
+        if ports:
+            changed["ports"] = ports
+        if proto:
+            changed["proto"] = proto
+        cfg = config_mod.from_dict(changed, list(cfg.sources) + ["디스코드 명령"])
     fresh = TunnelSession(cfg, extra_args=extra_args)
     fresh.prepare()
     fresh.start()
@@ -339,18 +349,22 @@ def cmd_run(args: argparse.Namespace) -> int:
 
             # 디스코드에서 온 요청 처리 (세션을 여닫는 건 이 스레드에서만 한다)
             action = ""
+            action_arg = ""
+            action_proto = ""
             try:
-                action, action_arg = requests.get_nowait()
+                action, action_arg, action_proto = requests.get_nowait()
             except queue.Empty:
                 pass
             if action == "stop":
                 util.info("디스코드 명령으로 종료합니다.")
                 break
             if action in ("restart", "open"):
-                label = "포트 %s 로 다시 엽니다" % action_arg if action_arg else "터널을 다시 엽니다"
+                bits = [b for b in (action_proto.upper(), action_arg) if b]
+                label = "%s 로 다시 엽니다" % " ".join(bits) if bits else "터널을 다시 엽니다"
                 util.info("디스코드 명령: %s" % label)
                 try:
-                    session, cfg = _reopen(session, cfg, action_arg, args.extra_args or "")
+                    session, cfg = _reopen(
+                        session, cfg, action_arg, action_proto, args.extra_args or "")
                 except SessionError as exc:
                     util.error(str(exc))
                     if control:

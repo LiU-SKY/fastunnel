@@ -1,4 +1,4 @@
-"""슬래시 명령(`/fastunnel …`) 등록과 처리.
+"""슬래시 명령(`/ft …`) 등록과 처리.
 
 접두사 명령(`!ft …`)은 **MESSAGE CONTENT INTENT** 가 켜져 있어야 한다. 꺼져 있으면
 봇에게 메시지 내용이 빈 문자열로 오기 때문에 무슨 수를 써도 읽을 수 없다.
@@ -30,9 +30,12 @@ EPHEMERAL = 64          # 명령을 친 사람에게만 보이는 답장
 
 # 슬래시 명령 이름은 소문자 영문으로 두고 설명을 한국어로 단다.
 # (한글 이름도 규격상 되지만 클라이언트마다 입력이 번거로워서 영문으로 통일했다)
+# 예전에 쓰던 이름. 새 이름으로 옮기면서 지운다. (우리가 만든 것만 지운다)
+LEGACY_NAMES = ("fastunnel",)
+
 COMMANDS: List[Dict[str, Any]] = [
     {
-        "name": "fastunnel",
+        "name": "ft",
         "description": "터널 관리",
         "options": [
             {"type": SUB_COMMAND, "name": "status", "description": "열려 있는 터널 목록 보기"},
@@ -40,9 +43,15 @@ COMMANDS: List[Dict[str, Any]] = [
             {"type": SUB_COMMAND, "name": "restart",
              "description": "터널을 다시 열기 (주소가 바뀝니다) · 서버 관리자"},
             {"type": SUB_COMMAND, "name": "open",
-             "description": "지정한 포트로 다시 열기 · 서버 관리자",
-             "options": [{"type": STRING, "name": "ports",
-                          "description": "예: 8000-8005,9000", "required": True}]},
+             "description": "지정한 프로토콜/포트로 열기 · 서버 관리자",
+             "options": [
+                 {"type": STRING, "name": "proto", "description": "tcp 또는 http",
+                  "required": True,
+                  "choices": [{"name": "tcp", "value": "tcp"},
+                              {"name": "http", "value": "http"}]},
+                 {"type": STRING, "name": "port",
+                  "description": "예: 25565 또는 8000-8005", "required": True},
+             ]},
             {"type": SUB_COMMAND, "name": "stop",
              "description": "터널을 닫고 종료 · 서버 관리자", },
             {"type": SUB_COMMAND, "name": "help", "description": "명령 목록 보기"},
@@ -120,6 +129,7 @@ class SlashCommands:
             break
         if self.registered:
             util.ok("슬래시 명령 %d개 등록 (%s)" % (self.registered, scope))
+            self._drop_legacy(url)
             return self.registered
 
         if status == 403:
@@ -129,6 +139,28 @@ class SlashCommands:
             snippet = " ".join(str(body).split())[:200]
             util.warn("슬래시 명령 등록 실패 (status=%s) %s" % (status, util.dim(snippet)))
         return 0
+
+    def _drop_legacy(self, url: str) -> None:
+        """예전 이름으로 등록해 둔 우리 명령을 지운다.
+
+        이름이 정확히 일치하는 것만 지운다. 같은 봇을 다른 프로그램과 나눠 쓸 수 있으므로
+        남의 명령을 건드려선 안 된다.
+        """
+        status, body = util.http_json(url, headers=self._headers(), timeout=15)
+        if not (200 <= status < 300) or not isinstance(body, list):
+            return
+        for command in body:
+            if not isinstance(command, dict):
+                continue
+            if str(command.get("name") or "") not in LEGACY_NAMES:
+                continue
+            cid = str(command.get("id") or "")
+            if not cid:
+                continue
+            gone, _ = util.http_json("%s/%s" % (url, cid), "DELETE",
+                                     headers=self._headers(), timeout=15)
+            if 200 <= gone < 300:
+                util.debug("예전 슬래시 명령 삭제: /%s" % command.get("name"))
 
     # ------------------------------------------------------------------
     def start(self) -> bool:
@@ -140,7 +172,7 @@ class SlashCommands:
             util.warn("게이트웨이 연결이 늦어집니다. 붙는 대로 슬래시 명령이 동작합니다. %s"
                       % util.dim(self.gateway.last_error))
         else:
-            util.ok("슬래시 명령 대기 중 (/fastunnel)")
+            util.ok("슬래시 명령 대기 중 (/ft)")
         return True
 
     def stop(self) -> None:
@@ -156,10 +188,10 @@ class SlashCommands:
             return
 
         data = payload.get("data") or {}
-        if str(data.get("name") or "") != "fastunnel":
+        if str(data.get("name") or "") not in ("ft",) + LEGACY_NAMES:
             return
 
-        name, args = self._read_options(data)
+        name, args, proto = self._read_options(data)
         member = payload.get("member") or {}
         user = member.get("user") or payload.get("user") or {}
         user_id = str(user.get("id") or "")
@@ -173,23 +205,29 @@ class SlashCommands:
             self.respond(payload, self.control.deny_text(name, user_id), ephemeral=True)
             return
 
-        reply = self.control.run_action(action, args)
-        # 조회 명령은 본인에게만 보여 채널을 덜 어지럽힌다. 터널을 여닫는 건 모두가 보게 둔다.
-        self.respond(payload, reply or "처리했습니다.", ephemeral=action in ("status", "url", "help"))
+        reply = self.control.run_action(action, args, proto)
+        # 명령과 그 답장은 **친 사람에게만** 보인다. 채널에는 터널이 열렸다는 알림만 올라간다.
+        # 명령이 오갈 때마다 채널이 지저분해지는 걸 막으려는 것이다.
+        self.respond(payload, reply or "처리했습니다.", ephemeral=True)
 
     @staticmethod
     def _read_options(data: Dict[str, Any]):
-        """`/fastunnel open ports:8000` 에서 (하위명령, 인자문자열) 을 뽑는다."""
+        """`/ft open proto:tcp port:25565` 에서 (하위명령, 포트, 프로토콜) 을 뽑는다."""
         options = data.get("options") or []
         if not options:
-            return "help", ""
+            return "help", "", ""
         sub = options[0] or {}
         name = str(sub.get("name") or "")
         args = ""
+        proto = ""
         for option in (sub.get("options") or []):
-            if str(option.get("name")) == "ports":
-                args = str(option.get("value") or "").strip()
-        return name, args
+            key = str(option.get("name"))
+            value = str(option.get("value") or "").strip()
+            if key in ("port", "ports"):
+                args = value
+            elif key == "proto":
+                proto = value.lower()
+        return name, args, proto
 
     def allowed(self, member: Dict[str, Any], user_id: str) -> bool:
         """인터랙션에 딸려 온 권한 비트로 판정한다. 추가 조회가 필요 없다."""

@@ -15,7 +15,7 @@ isolated_home("slash")
 
 from fastunnel import config as config_mod, util, ws as ws_mod  # noqa: E402
 from fastunnel.control import ControlActions, DiscordControl  # noqa: E402
-from fastunnel.slash import ADMINISTRATOR, COMMANDS, SlashCommands  # noqa: E402
+from fastunnel.slash import ADMINISTRATOR, COMMANDS, LEGACY_NAMES, SlashCommands  # noqa: E402
 
 
 class FakeSock:
@@ -70,8 +70,8 @@ class FakeActions(ControlActions):
         self.calls.append("restart")
         return "다시 엽니다"
 
-    def open(self, ports):
-        self.calls.append("open:%s" % ports)
+    def open(self, ports, proto=""):
+        self.calls.append("open:%s/%s" % (ports, proto))
         return "포트 %s 로 다시 엽니다" % ports
 
     def shutdown(self):
@@ -79,10 +79,15 @@ class FakeActions(ControlActions):
         return "종료합니다"
 
 
-def interaction(sub: str, ports: str = "", user: str = "u1", perms: str = "0"):
-    data = {"name": "fastunnel", "options": [{"name": sub, "type": 1}]}
+def interaction(sub: str, ports: str = "", user: str = "u1", perms: str = "0", proto: str = ""):
+    data = {"name": "ft", "options": [{"name": sub, "type": 1}]}
+    opts = []
+    if proto:
+        opts.append({"name": "proto", "type": 3, "value": proto})
     if ports:
-        data["options"][0]["options"] = [{"name": "ports", "type": 3, "value": ports}]
+        opts.append({"name": "port", "type": 3, "value": ports})
+    if opts:
+        data["options"][0]["options"] = opts
     return {
         "id": "int-1",
         "token": "int-token",
@@ -132,11 +137,16 @@ def run() -> bool:
     # ---------------- 명령 정의 ----------------
     top = COMMANDS[0]
     subs = [o["name"] for o in top["options"]]
-    r.check("명령 이름", top["name"] == "fastunnel")
+    r.check("명령 이름", top["name"] == "ft", top["name"])
+    open_sub = [o for o in top["options"] if o["name"] == "open"][0]
+    names = [o["name"] for o in open_sub["options"]]
+    r.check("open 은 proto/port 를 받는다", names == ["proto", "port"], ",".join(names))
+    choices = [c["value"] for c in open_sub["options"][0].get("choices", [])]
+    r.check("프로토콜 선택지", choices == ["tcp", "http"], ",".join(choices))
     r.check("하위 명령 6개", sorted(subs) == ["help", "open", "restart", "status", "stop", "url"],
             ",".join(sorted(subs)))
-    open_cmd = [o for o in top["options"] if o["name"] == "open"][0]
-    r.check("open 은 포트 인자가 필수", open_cmd["options"][0]["required"] is True)
+    r.check("open 인자는 모두 필수",
+            all(o["required"] for o in open_sub["options"]))
 
     # ---------------- 인터랙션 처리 ----------------
     actions = FakeActions()
@@ -155,11 +165,14 @@ def run() -> bool:
 
     util.http_json = fake_http
     try:
-        name, args = slash._read_options(interaction("open", "8000-8005")["data"])
-        r.check("하위 명령 해석", name == "open" and args == "8000-8005", "%s %s" % (name, args))
-        r.check("인자 없는 명령", slash._read_options(interaction("status")["data"]) == ("status", ""))
+        name, args, proto = slash._read_options(
+            interaction("open", "8000-8005", proto="tcp")["data"])
+        r.check("하위 명령 해석", name == "open" and args == "8000-8005" and proto == "tcp",
+                "%s %s %s" % (name, args, proto))
+        r.check("인자 없는 명령",
+                slash._read_options(interaction("status")["data"]) == ("status", "", ""))
         r.check("옵션이 아예 없으면 도움말",
-                slash._read_options({"name": "fastunnel"}) == ("help", ""))
+                slash._read_options({"name": "ft"}) == ("help", "", ""))
 
         # 권한: 관리자 비트가 있으면 통과
         r.check("관리자 비트면 허용",
@@ -187,11 +200,18 @@ def run() -> bool:
         r.check("권한 없으면 열기 거부", actions.calls == before)
         r.check("거부 안내를 보냈다", "권한이 없습니다" in sent[0][1]["data"]["content"])
 
-        # 관리자면 실행되고 채널 전체에 보인다
+        # 관리자면 실행된다. 답장은 친 사람에게만 보인다(채널에는 알림만 올라간다).
         del sent[:]
-        slash.on_interaction(interaction("open", "8000-8005", perms=str(ADMINISTRATOR)))
-        r.check("관리자는 열기 가능", "open:8000-8005" in actions.calls)
-        r.check("여닫는 명령은 모두에게 보인다", sent[0][1]["data"].get("flags") is None)
+        slash.on_interaction(interaction("open", "8000-8005", perms=str(ADMINISTRATOR), proto="tcp"))
+        r.check("관리자는 열기 가능", "open:8000-8005/tcp" in actions.calls, str(actions.calls[-1:]))
+        r.check("여닫는 명령 답장도 본인에게만", sent[0][1]["data"].get("flags") == 64)
+
+        # 예전 이름으로 온 인터랙션도 계속 받아 준다 (등록이 아직 안 지워졌을 수 있다)
+        del sent[:]
+        legacy = interaction("status")
+        legacy["data"]["name"] = LEGACY_NAMES[0]
+        slash.on_interaction(legacy)
+        r.check("예전 이름도 처리", len(sent) == 1)
 
         # 명령 등록은 POST 로 해야 한다. PUT 은 남의 명령까지 지운다.
         del sent[:]
@@ -206,7 +226,9 @@ def run() -> bool:
         count = slash.register()
         util.http_json = fake_http
         r.check("명령 1개 등록", count == 1, str(count))
-        r.check("PUT 을 쓰지 않는다 (남의 명령 삭제 방지)", methods == ["POST"], ",".join(methods))
+        # 등록은 POST, 그 뒤 예전 이름을 지우려고 목록을 GET 한다. PUT 은 절대 쓰지 않는다.
+        r.check("PUT 을 쓰지 않는다 (남의 명령 삭제 방지)",
+                "PUT" not in methods and methods[0] == "POST", ",".join(methods))
         r.check("서버 범위로 등록", "/guilds/guild-1/commands" in sent[0][0], sent[0][0])
         r.check("보낸 건 명령 하나(목록 아님)", isinstance(sent[0][1], dict))
 
