@@ -156,6 +156,81 @@ function Wait-Port([int]$port, [int]$seconds = 30) {
     return $false
 }
 
+# --------------------------------------------------- 서버가 진짜 살아있는지
+# 포트가 열린 것과 서버가 응답하는 것은 다른 문제다. cloudflared 는 서버가 죽어 있어도
+# 로컬 포트를 열어 준다. 그래서 마인크래프트가 쓰는 '서버 목록 핑'을 직접 보내 확인한다.
+function Write-VarInt([int]$value) {
+    $out = New-Object System.Collections.Generic.List[byte]
+    $v = [uint32]$value
+    while ($true) {
+        $b = [byte]($v -band 0x7F)
+        $v = $v -shr 7
+        if ($v -ne 0) { $out.Add([byte]($b -bor 0x80)) } else { $out.Add($b); break }
+    }
+    # 앞의 콤마가 없으면 파워셸이 배열을 풀어헤쳐 Object[] 로 돌려준다.
+    # 그러면 List[byte].AddRange 와 Stream.Write 가 받지 못한다.
+    return ,$out.ToArray()
+}
+
+function Read-VarInt($stream) {
+    $num = 0
+    for ($i = 0; $i -lt 5; $i++) {
+        $b = $stream.ReadByte()
+        if ($b -lt 0) { throw "연결이 끊겼습니다" }
+        $num = $num -bor (($b -band 0x7F) -shl (7 * $i))
+        if (($b -band 0x80) -eq 0) { return $num }
+    }
+    throw "잘못된 응답"
+}
+
+function Test-Minecraft([int]$port, [int]$timeoutSec = 12) {
+    try {
+        $client = New-Object System.Net.Sockets.TcpClient
+        $client.ReceiveTimeout = $timeoutSec * 1000
+        $client.SendTimeout = $timeoutSec * 1000
+        $client.Connect("127.0.0.1", $port)
+        $s = $client.GetStream()
+
+        $addrBytes = [Text.Encoding]::UTF8.GetBytes("localhost")
+        $body = New-Object System.Collections.Generic.List[byte]
+        $body.Add(0x00)                                    # 패킷 ID: 핸드셰이크
+        $body.AddRange((Write-VarInt 770))                 # 프로토콜 버전
+        $body.AddRange((Write-VarInt $addrBytes.Length))
+        $body.AddRange($addrBytes)
+        $pb = [BitConverter]::GetBytes([uint16]$port)
+        $body.AddRange([byte[]]@($pb[1], $pb[0]))   # 빅엔디언 2바이트
+        $body.AddRange((Write-VarInt 1))                   # 다음 상태: 조회
+        # [byte[]] 로 명시적으로 감싼다. 파워셸에서 byte[] + byte[] 는 Object[] 가 되어
+        # Stream.Write 가 받지 못한다.
+        $packet = [byte[]]((Write-VarInt $body.Count) + $body.ToArray())
+        $s.Write($packet, 0, $packet.Length)
+
+        $req = [byte[]]((Write-VarInt 1) + @([byte]0x00))  # 상태 요청
+        $s.Write($req, 0, $req.Length)
+        $s.Flush()
+
+        [void](Read-VarInt $s)                             # 전체 길이
+        if ((Read-VarInt $s) -ne 0) { throw "예상치 못한 응답" }
+        $len = Read-VarInt $s
+        $buf = New-Object byte[] $len
+        $got = 0
+        while ($got -lt $len) {
+            $n = $s.Read($buf, $got, $len - $got)
+            if ($n -le 0) { break }
+            $got += $n
+        }
+        $client.Close()
+        $json = [Text.Encoding]::UTF8.GetString($buf, 0, $got) | ConvertFrom-Json
+        return @{
+            version = $json.version.name
+            online  = $json.players.online
+            max     = $json.players.max
+        }
+    } catch {
+        return $null
+    }
+}
+
 # ------------------------------------------------------------------- 실행
 try {
     Show-Banner
@@ -178,14 +253,23 @@ try {
         exit 1
     }
 
+    Info "서버 응답 확인 중 ..."
+    $info = Test-Minecraft $port
     Say ""
-    Ok "연결됐습니다!"
+    if ($info) {
+        Ok "연결됐습니다!  (서버 $($info.version) · 접속자 $($info.online)/$($info.max))"
+    } else {
+        Warn "통로는 열렸지만 마인크래프트 서버가 응답하지 않습니다."
+        Info "  서버가 아직 켜지는 중이거나 꺼져 있을 수 있습니다."
+        Info "  그래도 아래 주소로 시도해 보세요. 안 되면 잠시 뒤 이 창을 다시 실행하세요."
+    }
     Say ""
     Say "  마인크래프트 -> 멀티플레이 -> 서버 추가에 이 주소를 넣으세요" "White"
     Say ""
     Say "      localhost:$port" "Yellow"
     Say ""
     Warn "이 창을 닫으면 접속이 끊깁니다. 게임하는 동안 켜 두세요."
+    Warn "마인크래프트는 반드시 이 창을 띄운 것과 같은 PC 에서 실행해야 합니다."
     Say ""
 
     if ($NoWait) { if ($proc -and -not $proc.HasExited) { $proc.Kill() }; exit 0 }
