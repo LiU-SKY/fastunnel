@@ -69,6 +69,7 @@ fastunnel/
 ├── slash.py        슬래시 명령 등록/처리 (/fastunnel)
 ├── gateway.py      디스코드 게이트웨이 클라이언트 (인터랙션 수신)
 ├── ws.py           최소 WebSocket 클라이언트 (RFC 6455). 게이트웨이 전용
+├── publish.py      현재 주소를 고정 URL(gist)에 게시. 클라이언트가 이걸 읽는다
 ├── util.py         로깅·포트파싱·HTTP·다운로드·권한 등 공용 도구
 └── providers/
     ├── base.py         BaseProvider / Tunnel 공통 인터페이스
@@ -107,6 +108,9 @@ fastunnel/
 | `.cmd` 파일을 UTF-8 로 저장하면 cmd.exe 가 파싱 실패 | `fastunnel-gui.cmd` 는 **cp949** 로 저장. 주석에 괄호 `()` 넣지 말 것 |
 | `os.kill(pid, 0)` 은 윈도우에서 **강제 종료**가 됨 | 생존 확인은 `util.pid_alive()` (OpenProcess 사용) |
 | Bash 힙독으로 큰 파일을 쓰면 잘림 | 소스 파일 생성은 Write 도구 사용 |
+| **Bash 힙독 안의 `
+` 이 실제 개행으로 바뀜** | 파이썬/PS 소스를 힙독으로 패치하지 말 것. Write/Edit 도구를 쓰세요 |
+| **`.ps1` 에 BOM 이 없으면 윈도우 파워셸 5.1 이 cp949 로 읽어 한글이 깨지고 파싱 실패** | `client/mc-connect.ps1` 은 **UTF-8 with BOM + CRLF** 로 저장. 편집 후 BOM 유지 확인 |
 
 ### 방화벽 (문법은 실기 검증 완료)
 

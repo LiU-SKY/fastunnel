@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from . import binaries, firewall as fw_mod, util
 from .notify import Notifier
+from .publish import address_payload, make as make_publisher
 from .providers import BaseProvider, ProviderError, Tunnel, get_provider
 
 
@@ -35,6 +36,7 @@ class TunnelSession:
         self.provider: Optional[BaseProvider] = None
         self.firewall: Optional[fw_mod.FirewallManager] = None
         self.notifier: Optional[Notifier] = None
+        self.publisher = None
         self.binary = ""
         self.version = ""
         self.started_at = 0.0
@@ -117,6 +119,9 @@ class TunnelSession:
             tag=self.tag,
         )
         self.notifier = Notifier(self.cfg, self.provider_name, self.proto)
+        self.publisher = make_publisher(self.cfg)
+        if self.publisher is not None:
+            util.info("주소 게시 사용 (gist %s)" % self.publisher.gist_id)
         self._prepared = True
 
     # ------------------------------------------------------------------
@@ -294,14 +299,29 @@ class TunnelSession:
         except Exception as exc:  # noqa: BLE001
             util.warn("알림 전송 실패(무시): %s" % exc)
 
+    def publish_address(self, note: str = "") -> bool:
+        """현재 주소를 고정 URL 에 올린다. 실패해도 터널은 그대로 간다."""
+        if self.publisher is None:
+            return False
+        try:
+            payload = address_payload(self.tunnels, self.provider_name, note)
+            return self.publisher.publish(payload)
+        except Exception as exc:  # noqa: BLE001 - 게시 실패가 터널을 막아선 안 된다
+            util.debug("주소 게시 오류: %s" % exc)
+            return False
+
     def notify_started(self) -> None:
+        # 알림보다 게시를 먼저 한다. 알림을 보고 바로 들어오는 사람이 있기 때문이다.
+        self.publish_address()
         self._notify("send_started")
 
     def notify_changed(self) -> None:
+        self.publish_address()
         if self.cfg.bool("notify_on_change"):
             self._notify("send_changed")
 
     def notify_stopped(self) -> None:
+        self.publish_address("종료됨")
         self._notify("send_stopped")
 
     # ------------------------------------------------------------------

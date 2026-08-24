@@ -2,6 +2,29 @@
 
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/) 를 따릅니다.
 
+## [1.3.0] - 2026-08-24
+
+### 추가
+
+- **원클릭 접속 클라이언트** (`client/`). 친구가 `mc-connect.cmd` 를 더블클릭하면
+  현재 주소를 자동으로 받아 cloudflared 를 내려받고 연결까지 한다.
+  마인크래프트에는 `localhost:25565` 만 넣으면 된다.
+  윈도우 기본 파워셸로 동작한다(파이썬 불필요).
+- **주소 게시** (`publish.py`). quick tunnel 주소는 실행할 때마다 바뀌므로,
+  절대 바뀌지 않는 URL(GitHub Gist) 하나를 두고 그 내용만 갱신한다.
+  터널이 열리거나 주소가 바뀌거나 종료될 때 자동으로 올린다.
+- 설정 `publish_gist_id` / `publish_gist_token`(비밀값) / `publish_gist_file`,
+  환경변수 `FASTUNNEL_PUBLISH_GIST_ID` / `_TOKEN`
+- `tools/publish-setup.py` — 토큰을 명령줄로 받지 않고 직접 입력받아 저장하고,
+  실제로 한 번 써 본 뒤 클라이언트용 URL 을 알려 준다
+
+### 확인
+
+- cloudflared 는 **전송량 제한이 없다**(2026년 7월 대역폭 과금 폐지, ToS 2.8 은 2023년 삭제).
+  ngrok 무료의 1GB/월 같은 벽이 없어서 이 방식을 택했다.
+
+---
+
 ## [1.2.2] - 2026-08-24
 
 ### 수정

@@ -1,0 +1,3 @@
+# 이 파일 첫 줄에 "지금 열린 터널 주소를 알려 주는 URL" 을 넣으세요.
+# 예: https://gist.githubusercontent.com/사용자/아이디/raw/mc.json
+# 주석은 # 로 시작합니다. 첫 번째 유효한 줄만 사용합니다.

@@ -22,6 +22,7 @@ MODULES = [
     ("notify", "test_notify", "로컬 수신 서버 사용"),
     ("control", "test_control", "로컬 수신 서버 사용 - 디스코드 명령"),
     ("slash", "test_slash", "네트워크 불필요 - 슬래시 명령/WebSocket"),
+    ("publish", "test_publish", "로컬 수신 서버 사용 - 주소 게시"),
     ("tunnel", "test_tunnel", "네트워크 필요 - 실제 터널을 엽니다"),
     ("gui", "test_gui", "화면 환경 필요 - 창은 띄우지 않습니다"),
 ]
