@@ -330,6 +330,17 @@ python -m fastunnel run -p 8000-8005   --discord-control --discord-admin 여러�
 > 터널을 여닫는 명령은 전부 거부됩니다. 채널에 있는 아무나 이 PC 의 포트를 열 수 있으면 안 되니까요.
 > 자기 ID 를 모르면 아무 명령이나 쳐 보세요. 거부 메시지에 본인 ID 가 같이 나옵니다.
 
+**이미 돌아가는 봇이 있다면** 토큰을 직접 옮겨 적지 말고 도구를 쓰세요.
+`.env` 에서 토큰을 찾아 검증하고 설정 파일까지 만들어 줍니다. 토큰은 마스킹해서만 보여 줍니다.
+
+```bash
+# 1) 토큰 확인 + 봇이 보이는 채널 목록
+python3 tools/discord-setup.py --env ~/내봇/.env
+
+# 2) 채널을 정했으면 저장 (설정은 ~/.fastunnel/config.json, 권한 600)
+python3 tools/discord-setup.py --env ~/내봇/.env --channel 채널ID --admin 내사용자ID
+```
+
 **봇 준비물**: [Discord Developer Portal](https://discord.com/developers/applications) 에서
 Bot → **MESSAGE CONTENT INTENT 켜기**(안 켜면 메시지 내용이 빈 값으로 와서 명령을 못 읽습니다) →
 봇을 서버에 초대(권한: 메시지 보기 / 메시지 보내기 / 메시지 기록 보기).

@@ -219,6 +219,33 @@ def run() -> bool:
     no_channel = DiscordControl(config_mod.from_dict({"discord_bot_token": "t"}), FakeActions())
     r.check("채널 없으면 사용 불가", "discord_channel_id" in no_channel.available())
 
+    # ---------------- 설정 도구 (tools/discord-setup.py) ----------------
+    # 채널 ID 를 찾을 때 토큰 탐지 휴리스틱이 같이 돌아서 토큰을 채널 ID 로 집고
+    # 화면에 찍은 적이 있다. 다시는 안 되도록 여기서 잡는다.
+    import importlib.util
+    import os
+
+    tool_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "discord-setup.py"
+    )
+    if os.path.isfile(tool_path):
+        spec = importlib.util.spec_from_file_location("discord_setup", tool_path)
+        setup = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(setup)
+
+        fake_token = "MTIzNDU2Nzg5MDEyMzQ1Njc4.Gabcde." + "x" * 40
+        env = {"DISCORD_TOKEN": fake_token, "NODE_ENV": "production"}
+        r.check("토큰은 이름이 달라도 찾는다",
+                setup.pick(env, setup.TOKEN_KEYS, token_like=True)[1] == fake_token)
+        r.check("채널 ID 자리에 토큰을 집지 않는다",
+                setup.pick(env, setup.CHANNEL_KEYS) == ("", ""))
+        r.check("채널 ID 가 있으면 그건 찾는다",
+                setup.pick({"CHANNEL_ID": "123"}, setup.CHANNEL_KEYS)[1] == "123")
+        r.check("마스킹에 토큰 원문이 안 남는다",
+                fake_token not in setup.mask(fake_token), setup.mask(fake_token))
+    else:
+        r.skip("설정 도구 검증", "tools/discord-setup.py 없음")
+
     # ---------------- 표시 문자열 ----------------
     tunnel = CloudflaredTunnel(8000, "tcp", "cloudflared")
     tunnel.set_url("tcp://abc.trycloudflare.com")
