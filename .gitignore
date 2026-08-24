@@ -1,0 +1,23 @@
+# 파이썬
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 사용자 설정 (비밀값이 들어갑니다 - 절대 커밋하지 마세요)
+fastunnel.json
+config.json
+
+# 런타임 산출물
+*.log
+tunnels.json
+.fastunnel/
+
+# 편집기 / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

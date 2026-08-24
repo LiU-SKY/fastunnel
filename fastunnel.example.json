@@ -1,0 +1,27 @@
+{
+  "provider": "cloudflared",
+  "ports": "8000-8005,9000",
+  "proto": "tcp",
+  "host": "localhost",
+  "update": "auto",
+
+  "firewall": true,
+  "firewall_direction": "both",
+  "firewall_persist": false,
+
+  "notify": true,
+  "discord_webhook": "https://discord.com/api/webhooks/<ID>/<TOKEN>",
+  "discord_bot_token": "",
+  "discord_channel_id": "",
+  "mention": "",
+  "notify_on_change": true,
+  "webhooks": [],
+
+  "ngrok_authtoken": "",
+  "ngrok_region": "",
+
+  "start_delay": 1.0,
+  "ready_timeout": 90,
+  "restart": true,
+  "max_restarts": 5
+}
