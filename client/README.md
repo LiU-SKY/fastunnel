@@ -46,7 +46,7 @@ server.txt 의 고정 URL
 `connect.cmd` 더블클릭 → 표에 나온 **`127.0.0.1:포트`** 로 접속.
 
 **따로 설치할 것은 없습니다.** cloudflared 가 없으면 처음 한 번 자동으로 내려받습니다
-(약 50MB, `%LOCALAPPDATA%	unnel-connect\`). 두 번째부터는 바로 연결됩니다.
+(약 50MB, `%LOCALAPPDATA%\tunnel-connect\` 에 저장). 두 번째부터는 바로 연결됩니다.
 이미 설치돼 있으면 그것을 그대로 씁니다. 32비트 윈도우도 알아서 맞는 파일을 받습니다.
 
 > `localhost` 로 넣으면 안 될 수 있습니다. 윈도우에서 `localhost` 는 IPv6(`::1`)로 먼저
