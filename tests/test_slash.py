@@ -193,6 +193,23 @@ def run() -> bool:
         r.check("관리자는 열기 가능", "open:8000-8005" in actions.calls)
         r.check("여닫는 명령은 모두에게 보인다", sent[0][1]["data"].get("flags") is None)
 
+        # 명령 등록은 POST 로 해야 한다. PUT 은 남의 명령까지 지운다.
+        del sent[:]
+        slash.app_id = "app-1"
+        control._guild_id = "guild-1"
+        methods = []
+        def watch_http(url, method="GET", payload=None, headers=None, timeout=15):
+            methods.append(method)
+            sent.append((url, payload))
+            return 200, {"id": "cmd-1", "name": "fastunnel"}
+        util.http_json = watch_http
+        count = slash.register()
+        util.http_json = fake_http
+        r.check("명령 1개 등록", count == 1, str(count))
+        r.check("PUT 을 쓰지 않는다 (남의 명령 삭제 방지)", methods == ["POST"], ",".join(methods))
+        r.check("서버 범위로 등록", "/guilds/guild-1/commands" in sent[0][0], sent[0][0])
+        r.check("보낸 건 명령 하나(목록 아님)", isinstance(sent[0][1], dict))
+
         # PING 인터랙션은 조용히 무시
         del sent[:]
         slash.on_interaction({"type": 1, "id": "x", "token": "y"})

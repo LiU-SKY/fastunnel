@@ -90,6 +90,12 @@ class SlashCommands:
         """명령을 등록한다. 서버(길드) 범위로 넣어야 즉시 반영된다.
 
         길드를 모르면 전역으로 넣는데, 전역은 반영에 최대 1시간 걸릴 수 있다.
+
+        **반드시 POST(하나만 추가/갱신)를 쓴다. PUT 은 쓰지 않는다.**
+        PUT 은 그 애플리케이션의 명령 목록을 통째로 갈아엎는다. 같은 봇 토큰을 쓰는
+        다른 프로그램이 이미 등록해 둔 명령이 있으면 전부 지워진다. 실제로 그렇게 해서
+        같은 봇의 `/setup` `/sync` 를 날린 적이 있다. POST 는 이름이 같으면 갱신하고
+        다르면 추가하므로 남의 명령을 건드리지 않는다.
         """
         if not self.app_id:
             self.load_app_id()
@@ -105,9 +111,14 @@ class SlashCommands:
             url = "%s/applications/%s/commands" % (self.api, self.app_id)
             scope = "전역(반영에 시간이 걸립니다)"
 
-        status, body = util.http_json(url, "PUT", COMMANDS, self._headers(), timeout=20)
-        if 200 <= status < 300 and isinstance(body, list):
-            self.registered = len(body)
+        self.registered = 0
+        for command in COMMANDS:
+            status, body = util.http_json(url, "POST", command, self._headers(), timeout=20)
+            if 200 <= status < 300 and isinstance(body, dict):
+                self.registered += 1
+                continue
+            break
+        if self.registered:
             util.ok("슬래시 명령 %d개 등록 (%s)" % (self.registered, scope))
             return self.registered
 
