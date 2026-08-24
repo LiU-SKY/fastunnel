@@ -104,6 +104,43 @@ def run() -> bool:
         fw.util.run_cmd = real_run_cmd
         fw.util.is_admin = real_is_admin
 
+    # ---------------- 공개 DNS 대기 (네트워크 없이 도는 부분만) ----------------
+    from fastunnel.providers.base import Tunnel
+    from fastunnel.runner import TunnelSession
+
+    t = Tunnel(8000, "tcp", "cloudflared")
+    t.set_url("tcp://abc-def-ghi.trycloudflare.com:7844")
+    r.check("호스트 이름 추출(tcp)", t.hostname() == "abc-def-ghi.trycloudflare.com", t.hostname())
+    t2 = Tunnel(8000, "http", "cloudflared")
+    t2.set_url("https://abc-def.trycloudflare.com/")
+    r.check("호스트 이름 추출(https)", t2.hostname() == "abc-def.trycloudflare.com", t2.hostname())
+    r.check("주소 없으면 빈 문자열", Tunnel(1, "tcp", "x").hostname() == "")
+
+    r.check("dns_wait 기본값", config_mod.from_dict({}).get("dns_wait") == 45)
+    r.check("dns_wait 문자열 정규화", config_mod.from_dict({"dns_wait": "10"}).get("dns_wait") == 10)
+    r.check("dns_wait 잘못된 값은 기본값",
+            config_mod.from_dict({"dns_wait": "열"}).get("dns_wait") == 45)
+
+    # dns_wait=0 이면 네트워크를 전혀 건드리지 않고 즉시 건너뛴다
+    off = TunnelSession(config_mod.from_dict({"ports": "8000", "dns_wait": 0}))
+    r.check("dns_wait=0 이면 대기 안 함", off.wait_public_dns() == "skip")
+    # 주소가 없으면 확인할 것도 없다
+    on = TunnelSession(config_mod.from_dict({"ports": "8000", "dns_wait": 45}))
+    r.check("주소 없으면 대기 안 함", on.wait_public_dns() == "skip")
+
+    real_resolve = util.resolve_public
+    try:
+        util.resolve_public = lambda host, timeout=8: ("missing", [])
+        r.check("등록 전이면 timeout 반환", util.wait_public_dns("x.example", 0.2, 0.05) == "timeout")
+        util.resolve_public = lambda host, timeout=8: ("ok", ["1.2.3.4"])
+        r.check("등록되면 즉시 ok", util.wait_public_dns("x.example", 5, 0.05) == "ok")
+        util.resolve_public = lambda host, timeout=8: ("unknown", [])
+        r.check("DoH 막히면 unknown", util.wait_public_dns("x.example", 0.3, 0.05) == "unknown")
+    finally:
+        util.resolve_public = real_resolve
+
+    r.check("잘못된 주소 probe", util.probe_url("://나쁜주소")[0] == 0)
+
     # ---------------- 시그널 핸들러 ----------------
     from fastunnel import cli
 

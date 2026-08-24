@@ -4,7 +4,7 @@
 "무엇이 끝났고, 무엇이 실제로 검증됐고, 무엇이 안 됐는지"를 정리한 문서입니다.
 
 - 작성 시점: 2026-08-24
-- 버전: 1.0.0
+- 버전: 1.0.1
 - 상태: **동작하는 완성품**. 실기 검증 완료. 배포 가능.
 
 ---
@@ -18,7 +18,7 @@ CLI 와 GUI 둘 다 있고, 파이썬 표준 라이브러리만 씁니다.
 python -m fastunnel doctor        # 환경 점검
 python -m fastunnel 8000-8005     # CLI 로 터널
 python -m fastunnel gui           # GUI
-python tests/run_all.py           # 전체 검증 (약 35초)
+python tests/run_all.py           # 전체 검증 (약 50초)
 ```
 
 읽는 순서: `README.md`(사용법) → `CLAUDE.md`(개발 규칙·함정) → `docs/ARCHITECTURE.md`(설계 배경)
@@ -47,12 +47,13 @@ python tests/run_all.py           # 전체 검증 (약 35초)
 | 설정 파일 / 환경 변수 | 완료 | 4단 병합 |
 | 진단(`doctor`) · 로그 뷰어 · 방화벽 정리 | 완료 | |
 | 자동 종료(`--duration`) | 완료 | 예약 실행·CI 용 |
+| 공개 DNS 등록 대기 | 완료 | `dns_wait`. 주소를 알리기 전에 DoH 로 확인 (1.0.1) |
 
 ### 파일
 
 ```
-fastunnel/          소스 9개 모듈 + providers 4개   (약 4,300줄)
-tests/              검증 5개 파일 (56개 체크)
+fastunnel/          소스 9개 모듈 + providers 4개   (약 4,600줄)
+tests/              검증 5개 파일 (70개 체크)
 docs/               ARCHITECTURE.md, HANDOFF.md
 README.md           사용자 문서 (한국어)
 CLAUDE.md           개발자/AI 세션용 문서
@@ -65,11 +66,12 @@ fastunnel.example.json         설정 예시
 
 ## 3. 실제로 검증한 것 (전부 실기 확인)
 
-`python tests/run_all.py` → **56개 체크 전부 통과 (34.6초)**
+`python tests/run_all.py` → **69개 체크 통과 · 1 건너뜀 (51.3초)**
 
 | 검증 | 결과 |
 |---|---|
 | HTTP 터널 → 발급된 공개 URL 로 접속 | **HTTP 200** (로컬 서버 응답 확인) |
+| 주소 공개 시점에 이름 조회 성공 (NXDOMAIN 캐시 없음) | 통과. 실제 CLI 실행으로도 확인 |
 | TCP 터널 → `cloudflared access tcp` 로 되돌려 접속 | **HTTP 200** (데이터 경로까지 확인) |
 | 포트 2개 동시 터널 | 2/2 주소 확보 |
 | ngrok 다운로드·압축해제·버전 인식 | 11.7MB → `3.39.11` |
@@ -90,6 +92,10 @@ fastunnel.example.json         설정 예시
 3. **`.cmd` 런처 파싱 실패** — UTF-8 저장된 한글을 cmd.exe 가 잘못 읽음 → cp949 저장, 주석 괄호 제거
 4. **`config.from_dict()` KeyError** — 부분 dict 를 넘기면 터짐 → 기본값 위에 덮어쓰도록 변경
 5. **iptables 인자 순서** — `-m comment` 가 `-j` 뒤에 있으면 삭제 시 매칭 실패 → 순서 교정
+6. **주소는 떴는데 접속이 안 됨 (1.0.1)** — cloudflared 가 DNS 등록보다 4~10초 먼저 주소를 출력.
+   그 틈의 조회가 NXDOMAIN 을 음수 캐시시켜 90초 이상 접속 불가. 실측으로 원인 확정
+   (일찍 조회 안 하면 성공 / 즉시 조회하면 91초까지 실패, 같은 시각 공개 DNS 는 정상).
+   → 주소를 알리기 전에 DoH 로 등록을 확인하도록 변경 (`runner.wait_public_dns`)
 
 ---
 

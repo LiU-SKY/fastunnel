@@ -16,6 +16,7 @@ DEFAULTS: Dict[str, Any] = {
     "host": "localhost",             # 터널이 연결할 로컬 호스트
     "start_delay": 1.0,              # 프로세스 순차 기동 간격(초) - 레이트리밋 회피
     "ready_timeout": 90,             # 모든 터널 주소 확보 대기(초)
+    "dns_wait": 45,                  # 주소가 공개 DNS 에 등록될 때까지 대기(초). 0이면 끔
     "restart": True,                 # 터널 프로세스가 죽으면 재시작
     "max_restarts": 5,
     # 바이너리
@@ -47,6 +48,7 @@ ENV_MAP = {
     "FASTUNNEL_HOST": "host",
     "FASTUNNEL_UPDATE": "update",
     "FASTUNNEL_BIN": "bin_path",
+    "FASTUNNEL_DNS_WAIT": "dns_wait",
     "FASTUNNEL_DISCORD_WEBHOOK": "discord_webhook",
     "DISCORD_WEBHOOK_URL": "discord_webhook",
     "FASTUNNEL_DISCORD_BOT_TOKEN": "discord_bot_token",
@@ -155,7 +157,7 @@ def normalize(data: Dict[str, Any]) -> Dict[str, Any]:
             data[key] = float(data.get(key, DEFAULTS[key]))
         except (TypeError, ValueError):
             data[key] = DEFAULTS[key]
-    for key in ("ready_timeout", "max_restarts"):
+    for key in ("ready_timeout", "max_restarts", "dns_wait"):
         try:
             data[key] = int(data.get(key, DEFAULTS[key]))
         except (TypeError, ValueError):
@@ -183,11 +185,13 @@ EXAMPLE_CONFIG = {
         "webhooks": '예: [{"type": "slack", "url": "https://hooks.slack.com/..."}]',
         "proto": "tcp | http | https",
         "update": "auto | skip | force | ask",
+        "dns_wait": "주소가 공개 DNS에 등록될 때까지 기다리는 초. 0이면 기다리지 않습니다.",
     },
     "provider": "cloudflared",
     "ports": "8000-8005,9000",
     "proto": "tcp",
     "update": "auto",
+    "dns_wait": 45,
     "firewall": True,
     "firewall_direction": "both",
     "notify": True,

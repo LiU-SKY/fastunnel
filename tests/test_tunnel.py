@@ -3,12 +3,13 @@
 
 cloudflared quick tunnel 을 진짜로 열고, 발급된 공개 주소로 접속해서
 로컬 서버 응답이 돌아오는지까지 확인한다.
+
+주소 확인에 util.probe_url 을 쓰는 이유: 리졸버가 이미 NXDOMAIN 을 캐시해 버린 망에서도
+데이터 경로 자체는 검증할 수 있어야 하기 때문이다(DoH 로 IP 를 얻어 SNI 직결로 우회).
 """
 from __future__ import annotations
 
 import sys
-import time
-import urllib.request
 
 from _harness import Results, free_port, isolated_home, local_server
 
@@ -16,13 +17,6 @@ isolated_home("tunnel")
 
 from fastunnel import binaries, config as config_mod, util  # noqa: E402
 from fastunnel.runner import SessionError, TunnelSession  # noqa: E402
-
-
-def _fetch(url: str, timeout: int = 25) -> int:
-    request = urllib.request.Request(url, headers={"User-Agent": "fastunnel-test"})
-    with urllib.request.urlopen(request, timeout=timeout) as resp:
-        resp.read(256)
-        return resp.getcode()
 
 
 def run() -> bool:
@@ -52,15 +46,13 @@ def run() -> bool:
             r.check("HTTP 터널 주소 확보", ready and session.online_count() == 1,
                     session.tunnels[0].address() if session.tunnels else "")
             if session.online_count():
-                url = session.tunnels[0].public_url
-                code = 0
-                for _ in range(3):   # 엣지에 전파될 때까지 잠깐 걸릴 수 있다
-                    try:
-                        code = _fetch(url)
-                        break
-                    except Exception:  # noqa: BLE001
-                        time.sleep(4)
-                r.check("공개 URL 로 로컬 서버 응답", code == 200, "HTTP %s" % code)
+                tunnel = session.tunnels[0]
+                code, how = util.probe_url(tunnel.public_url)
+                r.check("공개 URL 로 로컬 서버 응답", code == 200, "HTTP %s (%s)" % (code, how))
+                # wait_ready 가 DNS 등록까지 기다렸으므로 이름 조회가 성공해야 한다.
+                # (등록 전에 조회하면 NXDOMAIN 이 캐시되어 몇 분간 접속이 막힌다)
+                host = tunnel.hostname()
+                r.check("이름 조회 가능 (NXDOMAIN 캐시 없음)", util.local_resolves(host), host)
         except SessionError as exc:
             r.check("HTTP 터널 주소 확보", False, str(exc)[:70])
         finally:

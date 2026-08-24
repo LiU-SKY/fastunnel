@@ -179,19 +179,75 @@ class TunnelSession:
             return False
         seconds = int(timeout if timeout is not None else self.cfg.get("ready_timeout", 90))
         try:
-            return self.provider.wait_ready(seconds)
+            ready = self.provider.wait_ready(seconds)
         except Exception as exc:  # noqa: BLE001
             util.debug("wait_ready 오류: %s" % exc)
             return False
+        self.wait_public_dns()
+        return ready
+
+    def wait_public_dns(self) -> str:
+        """주소가 공개 DNS 에 등록될 때까지 기다린다.
+
+        cloudflared 는 DNS 등록보다 먼저 주소를 출력한다(실측 4~10초 차이).
+        그 틈에 브라우저·알림 봇·사용자가 조회하면 NXDOMAIN 이 음수 캐시되어
+        등록이 끝난 뒤에도 몇 분간 접속이 안 된다. 그래서 주소를 알리기 전에 여기서 막는다.
+
+        반환: "ok" | "timeout" | "unknown" | "skip"(대기 꺼짐/확인할 주소 없음)
+        """
+        try:
+            wait = float(self.cfg.get("dns_wait", 45) or 0)
+        except (TypeError, ValueError):
+            wait = 45.0
+        if wait <= 0:
+            return "skip"
+
+        hosts: List[str] = []
+        for tunnel in self.tunnels:
+            host = tunnel.hostname()
+            if host and "." in host and host not in hosts:
+                hosts.append(host)
+        if not hosts:
+            return "skip"
+
+        result = "ok"
+        started = time.time()
+        for index, host in enumerate(hosts, 1):
+            util.progress("공개 DNS 등록 대기 중 %d/%d" % (index - 1, len(hosts)))
+            left = wait - (time.time() - started)
+            verdict = util.wait_public_dns(host, max(0.0, left))
+            if verdict != "ok":
+                result = verdict
+                break
+        util.progress_clear()
+
+        if result == "ok":
+            util.debug("공개 DNS 등록 확인 (%.1f초)" % (time.time() - started))
+        elif result == "timeout":
+            util.warn(
+                "주소가 아직 공개 DNS 에 등록되지 않았습니다. "
+                "지금 바로 접속하면 잠시 '주소 없음'이 뜰 수 있으니 10~20초 뒤에 다시 시도하세요."
+            )
+        elif result == "unknown":
+            util.debug("공개 DNS 확인 불가(DoH 차단). 대기만 하고 진행합니다.")
+        return result
 
     def poll(self) -> bool:
         if self.provider is None or self._stopped:
             return False
         try:
-            return bool(self.provider.poll())
+            changed = bool(self.provider.poll())
         except Exception as exc:  # noqa: BLE001  - 감시 루프는 절대 죽지 않아야 한다
             util.debug("poll 오류: %s" % exc)
             return False
+        if changed:
+            # 재시작으로 주소가 새로 발급된 경우에도 DNS 등록 전에 알리면 안 된다.
+            # 여기서 한 번 막아 두면 CLI 출력·GUI 표·알림이 전부 안전해진다.
+            try:
+                self.wait_public_dns()
+            except Exception as exc:  # noqa: BLE001 - 확인 실패가 감시를 멈춰선 안 된다
+                util.debug("공개 DNS 확인 실패: %s" % exc)
+        return changed
 
     @property
     def tunnels(self) -> List[Tunnel]:

@@ -54,6 +54,21 @@ class Tunnel:
                 addr = addr[len(scheme):]
         return addr.rstrip("/")
 
+    def hostname(self) -> str:
+        """공개 주소의 호스트 이름만 (DNS 등록 확인용). 없으면 빈 문자열."""
+        if not self.public_url:
+            return ""
+        addr = self.public_url
+        for scheme in ("tcp://", "https://", "http://"):
+            if addr.startswith(scheme):
+                addr = addr[len(scheme):]
+                break
+        addr = addr.split("/", 1)[0]
+        # host:port 형태면 포트를 뗀다 (IPv6 주소는 quick tunnel 에서 나오지 않는다)
+        if addr.count(":") == 1:
+            addr = addr.split(":", 1)[0]
+        return addr.strip()
+
     def status_text(self) -> str:
         return STATUS_TEXT.get(self.status, self.status)
 

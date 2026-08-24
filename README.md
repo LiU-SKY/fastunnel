@@ -351,11 +351,16 @@ python -m fastunnel config path      # 탐색 경로 확인
 
   "start_delay": 1.0,
   "restart": true,
-  "max_restarts": 5
+  "max_restarts": 5,
+  "dns_wait": 45
 }
 ```
 
+`dns_wait` 는 **주소가 공개 DNS 에 등록될 때까지 기다리는 시간(초)** 입니다. 자세한 이유는
+"11. 문제 해결 > 주소는 떴는데 접속이 안 돼요" 를 보세요. `0` 이면 기다리지 않습니다(권장하지 않음).
+
 주요 환경 변수: `FASTUNNEL_PORTS`, `FASTUNNEL_PROVIDER`, `FASTUNNEL_PROTO`, `FASTUNNEL_UPDATE`,
+`FASTUNNEL_DNS_WAIT`,
 `DISCORD_WEBHOOK_URL`, `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `NGROK_AUTHTOKEN`,
 `FASTUNNEL_HOME`(작업 디렉터리 변경)
 
@@ -389,6 +394,7 @@ python -m fastunnel config path      # 탐색 경로 확인
     --authtoken / --region                     (ngrok)
     --start-delay    터널 순차 기동 간격(초)   (기본 1.0)
     --timeout        주소 확보 대기 시간(초)   (기본 90)
+    --dns-wait       공개 DNS 등록 대기(초)     (기본 45, 0이면 안 기다림)
     --no-restart     터널이 죽어도 재시작하지 않음
     --duration       지정한 초 후 자동 종료
     --out            터널 정보 JSON 저장 경로
@@ -430,6 +436,22 @@ python -m fastunnel config path      # 탐색 경로 확인
 
 **주소가 안 잡혀요**
 `python -m fastunnel logs -n 100` 으로 터널 로그를 보세요. 443 아웃바운드가 막혀 있으면 실패합니다.
+
+**주소는 떴는데 접속이 안 돼요 ("사이트에 연결할 수 없음" / NXDOMAIN)**
+cloudflared 는 주소를 **DNS 에 등록되기 전에** 먼저 출력합니다(실측 4~10초 차이).
+이 틈에 주소를 한 번이라도 조회하면 "그런 주소 없음"이 리졸버에 캐시되어,
+등록이 끝난 뒤에도 **몇 분 동안 계속 실패**합니다(실측 90초 이상). 특히 학교·회사망처럼
+공용 DNS 서버를 쓰는 환경에서 잘 나타납니다.
+
+fastunnel 은 이걸 막으려고 **주소를 알리기 전에 공개 DNS 등록을 먼저 확인**합니다
+(`dns_wait`, 기본 45초). 그래서 화면에 뜬 주소는 바로 열어도 됩니다.
+
+그래도 실패한다면:
+- `python -m fastunnel doctor` 의 `주소 등록확인` 항목을 보세요. `불가` 면 DoH 가 막힌 망이라
+  등록 확인 없이 고정 시간만 기다립니다. `--dns-wait 60` 처럼 넉넉히 주세요.
+- 이미 캐시가 오염됐다면 `ipconfig /flushdns`(윈도우) 후 **1~2분 뒤** 다시 시도하세요.
+  상위 DNS 서버가 캐시한 경우엔 시간이 지나야 풀립니다.
+- 급하면 터널을 다시 열어 **새 주소**를 받는 게 가장 빠릅니다.
 
 **포트가 여러 개일 때 일부만 열려요**
 cloudflared 는 quick tunnel 동시 생성이 많으면 제한될 수 있습니다.

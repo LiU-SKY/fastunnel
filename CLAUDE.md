@@ -118,6 +118,11 @@ fastunnel/
 
 ### 터널 제공자
 
+- **cloudflared 는 DNS 등록보다 주소를 먼저 출력합니다(실측 4~10초 차이).**
+  그 틈에 이름을 조회하면 NXDOMAIN 이 리졸버에 음수 캐시되어 등록 후에도 90초 이상 접속이 막힙니다.
+  그래서 `runner.wait_public_dns()` 가 **주소를 알리기 전에** 등록을 확인합니다.
+  확인은 반드시 **DoH**(`util.resolve_public`)로 하세요. 로컬 조회로 확인하면 그 조회가 캐시를 오염시킵니다.
+  재시작으로 주소가 바뀔 때도 같은 문제가 나므로 `runner.poll()` 에도 같은 대기가 들어 있습니다.
 - cloudflared quick tunnel 은 **계정/토큰 불필요**. `--url tcp://...` 도 quick tunnel 로 열립니다.
 - **TCP 터널은 접속하는 쪽에서 `cloudflared access tcp --hostname ... --url localhost:N` 을 실행해야** 합니다.
   이 안내 문자열은 `Tunnel.client_hint()` 가 만듭니다.

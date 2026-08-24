@@ -5,15 +5,19 @@
 from __future__ import annotations
 
 import ctypes
+import http.client
 import json
 import os
 import shutil
+import socket
+import ssl
 import subprocess
 import sys
 import tarfile
 import time
 import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -485,6 +489,153 @@ def http_json(
         return status, json.loads(text) if text else None
     except ValueError:
         return status, text
+
+
+# --------------------------------------------------------------------------
+# 공개 DNS / 도달성 확인
+#
+# cloudflared 는 quick tunnel 주소를 "DNS 에 등록되기 전에" 먼저 출력한다(실측 4~10초 차이).
+# 그 틈에 누군가 이름을 조회하면 NXDOMAIN 이 리졸버에 음수 캐시되어, 정작 등록이 끝난 뒤에도
+# 몇 분 동안 "그런 주소 없음"이 계속 돌아온다(실측 90초 이상 지속). 사용자 입장에서는
+# "주소는 떴는데 접속이 안 되는" 상태다.
+#
+# 그래서 등록 여부는 로컬 리졸버가 아니라 DoH(DNS over HTTPS)로 확인한다.
+# 로컬 캐시를 건드리지 않아야 나중에 브라우저가 조회할 때 깨끗하게 성공한다.
+# --------------------------------------------------------------------------
+
+DOH_ENDPOINTS = (
+    "https://dns.google/resolve",
+    "https://cloudflare-dns.com/dns-query",
+)
+
+# DoH 도 막힌 망에서 확인 없이 그냥 넘어가기 전에 기다려 주는 시간(초).
+# 실측 등록 시간이 4~10초라 넉넉히 잡았다.
+DNS_BLIND_GRACE = 12.0
+
+
+def resolve_public(host: str, timeout: int = 8) -> Tuple[str, List[str]]:
+    """DoH 로 A 레코드를 조회한다. 로컬 리졸버/캐시는 건드리지 않는다.
+
+    반환: ("ok", IP목록) | ("missing", []) | ("unknown", [])  ← unknown 은 DoH 자체가 막힌 경우
+    """
+    verdict = "unknown"
+    query = urllib.parse.quote(host, safe="")
+    for base in DOH_ENDPOINTS:
+        status, body = http_request(
+            "%s?name=%s&type=A" % (base, query),
+            headers={"accept": "application/dns-json"},
+            timeout=timeout,
+        )
+        if status != 200:
+            continue
+        try:
+            data = json.loads(body)
+        except ValueError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        answers = [
+            str(item.get("data") or "")
+            for item in (data.get("Answer") or [])
+            if isinstance(item, dict) and item.get("type") == 1
+        ]
+        answers = [ip for ip in answers if ip]
+        if answers:
+            return "ok", answers
+        verdict = "missing"      # 응답은 왔는데 A 레코드가 없다 = 아직 등록 전
+    return verdict, []
+
+
+def local_resolves(host: str) -> bool:
+    """로컬 리졸버로 이름이 풀리는지. (주의: 실패하면 NXDOMAIN 이 캐시될 수 있다)"""
+    try:
+        socket.getaddrinfo(host, None)
+        return True
+    except OSError:
+        return False
+
+
+def wait_public_dns(host: str, timeout: float = 45.0, tick: float = 2.0) -> str:
+    """주소가 공개 DNS 에 등록될 때까지 기다린다.
+
+    반환: "ok" | "timeout" | "unknown"(DoH 가 막혀 확인 불가)
+    """
+    started = time.time()
+    deadline = started + max(0.0, timeout)
+    while True:
+        verdict, _ips = resolve_public(host)
+        if verdict == "ok":
+            return "ok"
+        if verdict == "unknown":
+            # 확인할 방법이 없다. 로컬 조회는 캐시를 오염시키므로 하지 않고,
+            # 등록에 걸리는 만큼만 기다렸다가 그냥 진행한다.
+            rest = min(DNS_BLIND_GRACE, timeout) - (time.time() - started)
+            if rest > 0:
+                time.sleep(rest)
+            return "unknown"
+        if time.time() >= deadline:
+            return "timeout"
+        time.sleep(tick)
+
+
+def _get_via_ip(ip: str, host: str, path: str, secure: bool, timeout: int) -> int:
+    """IP 로 직접 붙되 SNI 와 Host 헤더는 원래 이름으로 보낸다."""
+    if secure:
+        context = ssl.create_default_context()
+        raw = socket.create_connection((ip, 443), timeout=timeout)
+        try:
+            wrapped = context.wrap_socket(raw, server_hostname=host)
+        except Exception:
+            raw.close()
+            raise
+        conn = http.client.HTTPSConnection(ip, 443, timeout=timeout)
+        conn.sock = wrapped
+    else:
+        conn = http.client.HTTPConnection(ip, 80, timeout=timeout)
+    try:
+        conn.request("GET", path or "/", headers={"Host": host, "User-Agent": USER_AGENT})
+        resp = conn.getresponse()
+        resp.read(512)
+        return resp.status
+    finally:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001 - 닫기 실패는 결과에 영향이 없다
+            pass
+
+
+def probe_url(url: str, timeout: int = 20) -> Tuple[int, str]:
+    """공개 주소에 실제로 접속해 본다. (HTTP 상태, 경로 설명) 반환. 실패는 (0, 사유).
+
+    로컬 리졸버가 이미 NXDOMAIN 을 캐시해 버린 환경에서도 판정이 되도록,
+    이름 조회에 실패하면 DoH 로 IP 를 얻어 SNI/Host 를 붙여 직접 접속한다.
+    """
+    parts = urllib.parse.urlsplit(url)
+    host = parts.hostname or ""
+    if not host:
+        return 0, "주소를 해석할 수 없습니다"
+
+    if local_resolves(host):
+        status, body = http_request(url, timeout=timeout)
+        if status:
+            return status, "이름 조회"
+        return 0, body[:120]
+
+    verdict, ips = resolve_public(host)
+    if verdict != "ok":
+        return 0, "공개 DNS 에 아직 등록되지 않았습니다" if verdict == "missing" else "이름을 조회할 수 없습니다"
+
+    path = parts.path or "/"
+    if parts.query:
+        path += "?" + parts.query
+    secure = parts.scheme != "http"
+    last = ""
+    for ip in ips[:3]:
+        try:
+            return _get_via_ip(ip, host, path, secure, timeout), "%s 직결(로컬 DNS 우회)" % ip
+        except Exception as exc:  # noqa: BLE001 - 다음 IP 로 넘어간다
+            last = str(exc)[:120]
+    return 0, last or "접속 실패"
 
 
 def download(url: str, dest: str, show_progress: bool = True) -> str:

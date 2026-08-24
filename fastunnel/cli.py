@@ -162,6 +162,7 @@ def build_run_config(args: argparse.Namespace):
         "bin_path": args.bin,
         "start_delay": args.start_delay,
         "ready_timeout": args.timeout,
+        "dns_wait": getattr(args, "dns_wait", None),
         "firewall_direction": args.firewall_direction,
         "discord_webhook": args.webhook,
         "discord_bot_token": args.bot_token,
@@ -367,6 +368,20 @@ def cmd_doctor(args: argparse.Namespace) -> int:  # noqa: ARG001
         took = (time.time() - start) * 1000
         mark = util.green("OK") if status else util.red("실패")
         print("   %-12s: %s %s" % (label, mark, util.dim("%d, %.0fms" % (status, took))))
+
+    # 터널 주소는 발급 직후 몇 초간 DNS 에 없다. 그때 조회하면 NXDOMAIN 이 캐시되어
+    # 한동안 접속이 막힌다. 그걸 피하려면 DoH 로 등록을 확인할 수 있어야 한다.
+    verdict, _ips = util.resolve_public("dns.google")
+    dns_wait = cfg.get("dns_wait", 45)
+    label = util._pad("DNS 등록확인", 12)   # 한글은 폭이 2라 %-12s 로는 안 맞는다
+    if verdict == "ok":
+        print("   %s: %s %s" % (
+            label, util.green("가능"),
+            util.dim("DoH 사용 · 최대 %s초 대기 후 주소 공개" % dns_wait)))
+    else:
+        print("   %s: %s %s" % (
+            label, util.yellow("불가"),
+            util.dim("DoH 차단됨 · %.0f초 고정 대기로 대체" % min(util.DNS_BLIND_GRACE, float(dns_wait or 0)))))
     print()
     return 0
 
@@ -551,6 +566,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--region", help="ngrok region (us, eu, ap, au, sa, jp, in)")
     run.add_argument("--start-delay", type=float, help="터널 순차 기동 간격(초)")
     run.add_argument("--timeout", type=int, help="주소 확보 대기 시간(초)")
+    run.add_argument(
+        "--dns-wait",
+        type=int,
+        help="주소가 공개 DNS에 등록될 때까지 대기(초, 기본 45). 0이면 기다리지 않음",
+    )
     run.add_argument("--no-restart", action="store_true", help="터널이 죽어도 재시작하지 않음")
     run.add_argument(
         "--duration", type=float, help="지정한 초가 지나면 자동 종료 (0이면 무제한)"
