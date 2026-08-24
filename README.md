@@ -14,6 +14,8 @@ python -m fastunnel 8000-8005
 - 윈도우 / 리눅스 / macOS 에서 같은 명령으로 동작합니다.
 - 클라우드플레어 quick tunnel 은 **계정도 토큰도 필요 없습니다.**
 - 명령어가 싫다면 `fastunnel-gui.cmd` 로 **GUI**를 쓰면 됩니다.
+- **디스코드에서 `/ft open proto:tcp port:25565` 로 원격 조종**할 수 있습니다.
+- 접속하는 사람을 위한 **원클릭 클라이언트**가 들어 있습니다 (`client/`).
 
 > **개발에 참여하거나 코드를 이어서 손보려면** — [`CLAUDE.md`](CLAUDE.md) (개발 규칙과 함정),
 > [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (설계 배경),
@@ -418,7 +420,56 @@ WebSocket 클라이언트가 없어서 `fastunnel/ws.py` 에 필요한 만큼만
 
 ---
 
-## 8. 설정 파일
+## 8. 접속하는 사람을 위한 클라이언트
+
+TCP 터널은 접속하는 쪽에서도 `cloudflared access tcp` 를 실행해야 합니다.
+그 과정을 대신해 주는 **원클릭 클라이언트**가 `client/` 에 들어 있습니다.
+
+```
+client/
+├── connect.cmd    ← 받는 사람이 더블클릭하는 파일
+├── connect.ps1    ← 윈도우 기본 파워셸로 동작 (설치 불필요)
+└── server.txt     ← 지금 열린 터널을 알려 주는 고정 URL
+```
+
+받는 사람은 `connect.cmd` 를 더블클릭하면 끝입니다.
+cloudflared 가 없으면 처음 한 번 자동으로 내려받고, 열려 있는 터널을 전부 연결한 뒤
+어떤 주소로 접속하면 되는지 표로 보여 줍니다.
+
+```
+원격 포트 접속 주소           상태
+----- -----           --
+25565 127.0.0.1:25565 정상
+ 8080 127.0.0.1:8080  응답 없음
+```
+
+### 주소가 바뀌어도 되는 이유
+
+quick tunnel 주소는 실행할 때마다 바뀝니다. 그래서 **주소를 직접 알려 주지 않고,
+"지금 무엇이 열려 있는지" 알려 주는 URL 하나를 고정**해 두고 클라이언트가 그때그때 읽어 옵니다.
+포트 목록도 같이 받아오므로, 서버에서 여는 포트를 바꿔도 받는 쪽은 아무것도 안 해도 됩니다.
+
+고정 URL 로는 GitHub Gist 를 씁니다. URL 이 영구 고정이고, 인증 없이 읽히고, 무료입니다.
+
+```bash
+# gist 를 하나 만든 뒤 (파일 이름 mc.json, 내용 {})
+python3 tools/publish-setup.py --gist-id <GIST_ID> --owner <깃허브사용자명>
+```
+
+토큰은 화면에 보이지 않게 입력받아 `~/.fastunnel/config.json`(권한 600)에만 저장하고,
+실제로 한 번 써 본 뒤 클라이언트에 넣을 URL 을 알려 줍니다.
+그 URL 을 `client/server.txt` 첫 줄에 넣어 폴더째 전달하면 됩니다.
+
+설정 키는 `publish_gist_id` / `publish_gist_token` / `publish_gist_file` 입니다.
+설정되어 있으면 터널이 열리거나 주소가 바뀌거나 종료될 때 자동으로 갱신합니다.
+
+> **배포 전에 [`client/README.md`](client/README.md) 의 보안 항목을 읽으세요.**
+> 배포물에 비밀값은 없지만, 받은 사람은 **열려 있는 포트 전부에 접속할 수 있습니다.**
+> 터널 자체에는 인증이 없습니다.
+
+---
+
+## 9. 설정 파일
 
 매번 옵션을 치기 번거로우면 설정 파일을 만드세요.
 
@@ -468,7 +519,7 @@ python -m fastunnel config path      # 탐색 경로 확인
 
 ---
 
-## 9. 명령 전체 목록
+## 10. 명령 전체 목록
 
 | 명령 | 설명 |
 |---|---|
@@ -511,7 +562,7 @@ python -m fastunnel config path      # 탐색 경로 확인
 
 ---
 
-## 10. 동작 방식
+## 11. 동작 방식
 
 ```
 포트 파싱 → 실행 파일 확보(필요 시 다운로드/업데이트) → 사전 점검
@@ -538,7 +589,7 @@ python -m fastunnel config path      # 탐색 경로 확인
 
 ---
 
-## 11. 문제 해결
+## 12. 문제 해결
 
 **주소가 안 잡혀요**
 `python -m fastunnel logs -n 100` 으로 터널 로그를 보세요. 443 아웃바운드가 막혀 있으면 실패합니다.
@@ -584,20 +635,27 @@ UTF-8 출력을 자동으로 켜지만, 오래된 콘솔에서는 `chcp 65001` �
 
 ---
 
-## 12. 보안상 주의
+## 13. 보안상 주의
 
 - 터널을 열면 해당 포트가 **인터넷에 공개**됩니다. 인증 없는 서비스는 열지 마세요.
 - 발급된 임시 도메인 주소는 아는 사람이면 누구나 접속할 수 있습니다. 알림 채널 관리에 주의하세요.
 - 필요한 포트만, 필요한 시간만 여세요 (`--duration` 활용).
 - 웹훅 URL과 봇 토큰은 비밀값입니다. 설정 파일을 저장소에 커밋하지 마세요.
+  (`.gitignore` 가 `fastunnel.json` / `config.json` 을 막고 있습니다)
+- **디스코드 명령으로 터널을 여닫는 권한**은 서버 관리자에게만 있습니다.
+  더 좁히려면 `discord_allow_guild_admins: false` 로 두고 `discord_admins` 목록만 쓰세요.
+- **접속 클라이언트를 배포하면 받은 사람은 열려 있는 포트 전부에 접속할 수 있습니다.**
+  터널에는 인증이 없으므로 접근 제어는 서비스 쪽에서 하세요
+  ([`client/README.md`](client/README.md) 참고).
 
 ---
 
-## 13. 개발
+## 14. 개발
 
 ```bash
-python tests/run_all.py                 # 전체 검증 (약 35초, 실제 터널을 엽니다)
-python tests/run_all.py --no-network    # 네트워크 없이
+python tests/run_all.py                 # 전체 검증 (약 60초, 실제 터널을 엽니다)
+python tests/run_all.py --no-network    # 네트워크 없이 (약 8초, 167개)
+python tests/run_all.py control slash   # 원하는 것만
 python -m compileall -q fastunnel       # 문법 검사
 ```
 
