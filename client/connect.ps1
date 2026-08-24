@@ -32,7 +32,10 @@ $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Store = Join-Path $env:LOCALAPPDATA "tunnel-connect"
 $CfPath = Join-Path $Store "cloudflared.exe"
 $CachePath = Join-Path $Store "last-tunnels.json"
-$CF_URL = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+# 32비트 윈도우도 있으므로 받아올 파일을 골라 준다.
+# (ARM 윈도우는 x64 에뮬레이션으로 amd64 가 그대로 돈다 - 전용 빌드가 없다)
+$CfArch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "386" }
+$CF_URL = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-$CfArch.exe"
 
 function Say([string]$t, [string]$c = "Gray") { Write-Host $t -ForegroundColor $c }
 function Ok([string]$t)   { Say "  [+] $t" "Green" }
@@ -120,15 +123,25 @@ function Ensure-Cloudflared {
     if ($found) { return $found.Source }
     if (Test-Path $CfPath) { return $CfPath }
 
-    Info "접속 프로그램(cloudflared)을 내려받는 중 ... 처음 한 번만 받습니다"
+    Info "접속 프로그램(cloudflared)을 내려받는 중 ... 처음 한 번만 받습니다 (약 50MB)"
     New-Item -ItemType Directory -Force -Path $Store | Out-Null
+    $tmp = $CfPath + ".part"
     try {
         $ProgressPreference = "SilentlyContinue"
-        Invoke-WebRequest -Uri $CF_URL -OutFile $CfPath -TimeoutSec 180 -UseBasicParsing
+        # 옛 윈도우는 TLS 1.2 가 기본이 아니라 깃허브 연결이 막힌다
+        try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
+        Invoke-WebRequest -Uri $CF_URL -OutFile $tmp -TimeoutSec 300 -UseBasicParsing
     } catch {
+        Remove-Item $tmp -ErrorAction SilentlyContinue
         throw "cloudflared 를 내려받지 못했습니다: $($_.Exception.Message)"
     }
-    Ok "접속 프로그램 준비 완료"
+    # 받다 만 파일을 다음 실행에서 정상으로 착각하지 않도록 다 받은 뒤에 이름을 바꾼다
+    if ((Get-Item $tmp).Length -lt 1MB) {
+        Remove-Item $tmp -ErrorAction SilentlyContinue
+        throw "내려받은 파일이 온전하지 않습니다. 잠시 뒤 다시 시도해 주세요."
+    }
+    Move-Item $tmp $CfPath -Force
+    Ok "접속 프로그램 준비 완료 ($CfArch)"
     return $CfPath
 }
 
