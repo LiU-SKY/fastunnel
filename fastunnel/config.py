@@ -40,6 +40,7 @@ DEFAULTS: Dict[str, Any] = {
     "discord_prefix": "!ft",         # 명령 접두사
     "discord_admins": [],            # 터널을 여닫을 수 있는 사용자 ID 목록
     "discord_allow_guild_admins": True,   # 디스코드 서버 관리자면 자동으로 허용
+    "discord_slash": True,           # 슬래시 명령(/fastunnel) 사용. 게이트웨이로 인터랙션 수신
     "discord_poll": 3,               # 채널 확인 간격(초)
     # ngrok 전용
     "ngrok_authtoken": "",
@@ -78,6 +79,7 @@ BOOL_KEYS = {
     "notify_on_change",
     "discord_control",
     "discord_allow_guild_admins",
+    "discord_slash",
 }
 
 SECRET_KEYS = {"discord_webhook", "discord_bot_token", "ngrok_authtoken"}
@@ -227,6 +229,7 @@ EXAMPLE_CONFIG = {
     "discord_prefix": "!ft",
     "discord_admins": [],
     "discord_allow_guild_admins": True,
+    "discord_slash": True,
     "ngrok_authtoken": "",
 }
 

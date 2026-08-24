@@ -65,7 +65,10 @@ fastunnel/
 ├── binaries.py     cloudflared/ngrok 자동 다운로드·버전확인·업데이트
 ├── firewall.py     netsh / ufw / firewalld / iptables 규칙 추가·원복
 ├── notify.py       디스코드 웹훅·봇, 슬랙, 텔레그램, 범용 웹훅
-├── control.py      디스코드 봇 명령 수신 (채널 폴링). 조종 동작은 프런트엔드가 구현
+├── control.py      디스코드 봇 명령 수신 (접두사 명령 = 채널 폴링). 권한 판정도 여기
+├── slash.py        슬래시 명령 등록/처리 (/fastunnel)
+├── gateway.py      디스코드 게이트웨이 클라이언트 (인터랙션 수신)
+├── ws.py           최소 WebSocket 클라이언트 (RFC 6455). 게이트웨이 전용
 ├── util.py         로깅·포트파싱·HTTP·다운로드·권한 등 공용 도구
 └── providers/
     ├── base.py         BaseProvider / Tunnel 공통 인터페이스
@@ -165,8 +168,14 @@ fastunnel/
 
 ### 디스코드 명령 다루기
 
-- 게이트웨이(WebSocket)를 쓰지 않습니다. **표준 라이브러리에 WebSocket 클라이언트가 없어서**
-  채널을 폴링합니다(`discord_poll`, 기본 3초). 이 제약을 깨려면 먼저 사용자에게 물어보세요.
+- **접두사 명령(`!ft`)은 MESSAGE CONTENT INTENT 가 켜져 있어야만 동작합니다.** 꺼져 있으면
+  REST 로 읽어도 `content` 가 빈 문자열로 옵니다(봇 자신의 메시지까지). 코드로 우회할 수 없습니다.
+  그래서 기본 경로는 **슬래시 명령**입니다. 인텐트가 필요 없습니다.
+- 인터랙션은 게이트웨이(WebSocket)로만 받을 수 있습니다. 인터랙션 엔드포인트 URL 방식은
+  고정 공개 주소 + Ed25519 서명 검증이 필요한데 우리 주소는 실행할 때마다 바뀝니다.
+  그래서 `ws.py` 에 WebSocket 클라이언트를 직접 만들었습니다(외부 패키지 없음).
+  압축·RESUME 은 구현하지 않았습니다. 끊기면 다시 IDENTIFY 합니다.
+- 슬래시 명령 권한은 인터랙션에 딸려 오는 `member.permissions` 비트로 봅니다. REST 조회가 필요 없습니다.
 - **터널을 여닫는 명령은 디스코드 서버 관리자(Administrator/소유자) 또는 `discord_admins` 등록자만**
   쓸 수 있습니다. 둘 다 아니면 조회만 됩니다. 채널 멤버 아무나 포트를 열 수 있으면 안 되므로
   이 기준을 더 느슨하게 만들지 마세요.

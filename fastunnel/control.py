@@ -1,8 +1,12 @@
 """디스코드 봇으로 명령 받기.
 
-게이트웨이(WebSocket)를 쓰지 않는 이유: 표준 라이브러리에 WebSocket 클라이언트가 없다.
-채널 메시지를 몇 초 간격으로 읽어 오는 방식이면 urllib 만으로 되고, 사람이 손으로 치는
-명령 빈도에는 충분하다. 폴링 간격은 `discord_poll`(기본 3초).
+명령을 받는 길이 두 개다.
+
+1. **슬래시 명령 `/fastunnel …`** (권장) — `slash.py` + `gateway.py`.
+   인텐트가 필요 없어서 설정만 맞으면 바로 동작한다.
+2. **접두사 명령 `!ft …`** — 이 파일의 채널 폴링(`discord_poll`, 기본 3초).
+   **MESSAGE CONTENT INTENT 가 켜져 있어야 한다.** 꺼져 있으면 메시지 내용이 빈 문자열로
+   와서 무슨 수를 써도 읽을 수 없다. 그래서 이쪽만 믿으면 안 된다.
 
 권한: 포트를 열고 닫는 명령은 **디스코드 서버 관리자**(Administrator 권한 또는 서버 소유자)이거나
 `discord_admins` 에 등록된 사용자만 쓸 수 있다. 둘 다 아니면 조회 명령만 받는다. 채널에 있는 아무나 이 PC 의 포트를 열 수 있으면 안 되기 때문이다.
@@ -82,6 +86,7 @@ class DiscordControl:
             str(x).strip() for x in (config.get("discord_admins", []) or []) if str(x).strip()
         ]
         self.allow_guild_admins = bool(config.bool("discord_allow_guild_admins"))
+        self.use_slash = bool(config.bool("discord_slash"))
         try:
             self.poll_interval = max(1.0, float(config.get("discord_poll", 3) or 3))
         except (TypeError, ValueError):
@@ -96,7 +101,11 @@ class DiscordControl:
         self._admin_roles_cache = set()
         self._admin_roles_at = 0.0
         self._perm_cache = {}
+        self.slash = None
         self.started = False
+
+    # 슬래시 명령 쪽에서도 쓰는 상수
+    MUTATING_ACTIONS = MUTATING
 
     # ------------------------------------------------------------------
     def available(self) -> str:
@@ -124,9 +133,22 @@ class DiscordControl:
         self._thread.start()
         self.started = True
         util.ok("디스코드 명령 수신 시작 (%s 도움말)" % self.prefix)
+
+        if self.use_slash:
+            from .slash import SlashCommands      # 게이트웨이는 필요할 때만 불러온다
+
+            slash = SlashCommands(self)
+            try:
+                if slash.start():
+                    self.slash = slash
+            except Exception as exc:  # noqa: BLE001 - 슬래시가 안 되어도 터널은 돌아야 한다
+                util.warn("슬래시 명령을 켜지 못했습니다: %s" % str(exc)[:150])
         return True
 
     def stop(self) -> None:
+        if self.slash is not None:
+            self.slash.stop()
+            self.slash = None
         self._stop.set()
         thread = self._thread
         if thread and thread.is_alive():
@@ -146,7 +168,7 @@ class DiscordControl:
             self._self_id = str(body.get("id") or "")
 
         status, body = util.http_json(
-            "%s/channels/%s/messages?limit=1" % (self.api, self.channel_id),
+            "%s/channels/%s/messages?limit=5" % (self.api, self.channel_id),
             headers=self._headers(),
             timeout=12,
         )
@@ -161,10 +183,31 @@ class DiscordControl:
             return False
         if isinstance(body, list) and body:
             self._last_id = str(body[0].get("id") or "")
+            self._warn_if_content_hidden(body)
 
         if self.allow_guild_admins:
             self._load_guild()
         return True
+
+    def _warn_if_content_hidden(self, messages: List[Dict[str, Any]]) -> None:
+        """MESSAGE CONTENT INTENT 가 꺼져 있으면 접두사 명령이 영영 안 먹는다.
+
+        사람이 쓴 메시지인데 내용이 전부 비어 오면 그 상황으로 본다.
+        조용히 안 되는 것보다 시작할 때 알려 주는 편이 낫다.
+        """
+        human = [m for m in messages if not ((m.get("author") or {}).get("bot"))]
+        if not human:
+            return
+        if any(str(m.get("content") or "").strip() for m in human):
+            return
+        util.warn(
+            "메시지 내용을 읽을 수 없습니다 (MESSAGE CONTENT INTENT 꺼짐). "
+            "`%s` 접두사 명령은 동작하지 않습니다." % self.prefix
+        )
+        if self.use_slash:
+            util.info("  슬래시 명령 %s 을 쓰세요. 인텐트 없이 동작합니다." % util.bold("/fastunnel"))
+        else:
+            util.info("  Developer Portal → Bot → MESSAGE CONTENT INTENT 를 켜세요.")
 
     # ------------------------------------------------------------------
     # 서버 관리자 판정
@@ -298,15 +341,19 @@ class DiscordControl:
             )
 
         if name in MUTATING and not self._allowed(author_id):
-            how = "디스코드 서버 **관리자 권한**이 있거나 `discord_admins` 에 등록된 사람"
-            if not self.allow_guild_admins:
-                how = "`discord_admins` 에 등록된 사람"
-            return (
-                "`%s` 명령 권한이 없습니다.\n%s만 쓸 수 있습니다.\n(당신의 ID: `%s`)"
-                % (parts[0], how, author_id or "확인 불가")
-            )
+            return self.deny_text(parts[0], author_id)
 
-        return self._run(name, args)
+        return self.run_action(name, args)
+
+    def deny_text(self, typed: str, author_id: str) -> str:
+        """권한이 없을 때 보여 줄 안내. 접두사 명령과 슬래시 명령이 같이 쓴다."""
+        how = "디스코드 서버 **관리자 권한**이 있거나 `discord_admins` 에 등록된 사람"
+        if not self.allow_guild_admins:
+            how = "`discord_admins` 에 등록된 사람"
+        return (
+            "`%s` 명령 권한이 없습니다.\n%s만 쓸 수 있습니다.\n(당신의 ID: `%s`)"
+            % (typed, how, author_id or "확인 불가")
+        )
 
     def _allowed(self, author_id: str) -> bool:
         if not author_id:
@@ -315,7 +362,7 @@ class DiscordControl:
             return True
         return self.is_guild_admin(author_id)
 
-    def _run(self, name: str, args: str) -> str:
+    def run_action(self, name: str, args: str) -> str:
         try:
             if name == "help":
                 return HELP_TEXT.format(p=self.prefix)

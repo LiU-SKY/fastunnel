@@ -164,6 +164,7 @@ def _control(fake, actions, **over):
         "discord_channel_id": CHANNEL,
         "discord_prefix": "!ft",
         "discord_poll": 1,
+        "discord_slash": False,      # 여기서는 접두사 명령만 본다 (슬래시는 test_slash.py)
     }
     data.update(over)
     return DiscordControl(config_mod.from_dict(data), actions, api=fake.api)

@@ -2,6 +2,30 @@
 
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/) 를 따릅니다.
 
+## [1.2.0] - 2026-08-24
+
+### 추가
+
+- **슬래시 명령 `/fastunnel`** — `status` / `url` / `restart` / `open ports:…` / `stop` / `help`.
+  접두사 명령과 달리 **MESSAGE CONTENT INTENT 가 필요 없다.**
+- `ws.py` — RFC 6455 WebSocket 클라이언트를 필요한 만큼만 직접 구현(외부 패키지 없이).
+  텍스트 프레임 · 조각 합치기 · ping/pong · 마스킹
+- `gateway.py` — 디스코드 게이트웨이 클라이언트. 인터랙션만 받으므로 `intents=0`.
+  끊기면 백오프 후 다시 IDENTIFY
+- `slash.py` — 명령 등록(서버 범위라 즉시 반영)과 인터랙션 처리.
+  권한은 인터랙션에 딸려 오는 `member.permissions` 로 판정해 추가 조회가 없다
+- 설정 `discord_slash`(기본 true) / `--no-discord-slash`
+- 시작할 때 MESSAGE CONTENT INTENT 가 꺼진 것으로 보이면 경고하고 슬래시 명령을 안내한다
+
+### 배경
+
+`!ft` 접두사 명령이 응답하지 않는 사례가 있었다. 확인해 보니 봇에게 오는 메시지의
+`content` 가 전부 빈 문자열이었다(자기 자신이 보낸 메시지까지). MESSAGE CONTENT INTENT 가
+꺼져 있으면 REST 로 읽어도 내용이 지워져서 오기 때문이고, 코드로는 우회할 수 없다.
+슬래시 명령은 이 인텐트를 요구하지 않아서 근본적인 해결이 된다.
+
+---
+
 ## [1.1.0] - 2026-08-24
 
 ### 추가

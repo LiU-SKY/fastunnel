@@ -315,7 +315,21 @@ python -m fastunnel run -p 8000-8005   --discord-control --discord-admin 여러�
 }
 ```
 
+**슬래시 명령을 쓰세요.** `/fastunnel` 을 치면 하위 명령이 자동완성으로 뜹니다.
+
 | 명령 | 하는 일 | 권한 |
+|---|---|---|
+| `/fastunnel status` | 열려 있는 터널 목록 | 누구나 |
+| `/fastunnel url` | 공개 주소만 보기 | 누구나 |
+| `/fastunnel restart` | 터널을 다시 열기 (주소가 바뀜) | 서버 관리자 |
+| `/fastunnel open ports:8000-8005` | 지정한 포트로 다시 열기 | 서버 관리자 |
+| `/fastunnel stop` | 터널을 닫고 종료 | 서버 관리자 |
+
+접두사 명령(`!ft …`)도 그대로 남아 있지만 **MESSAGE CONTENT INTENT 가 켜져 있어야만** 동작합니다.
+꺼져 있으면 봇에게 메시지 내용이 빈 문자열로 오기 때문에 읽을 방법이 없습니다.
+슬래시 명령은 그 인텐트가 필요 없습니다.
+
+| 접두사 명령 | 하는 일 | 권한 |
 |---|---|---|
 | `!ft 상태` | 열려 있는 터널 목록 | 누구나 |
 | `!ft 주소` | 공개 주소만 다시 보기 | 누구나 |
@@ -349,12 +363,15 @@ python3 tools/discord-setup.py --env ~/내봇/.env
 python3 tools/discord-setup.py --env ~/내봇/.env --channel 채널ID --admin 내사용자ID
 ```
 
-**봇 준비물**: [Discord Developer Portal](https://discord.com/developers/applications) 에서
-Bot → **MESSAGE CONTENT INTENT 켜기**(안 켜면 메시지 내용이 빈 값으로 와서 명령을 못 읽습니다) →
-봇을 서버에 초대(권한: 메시지 보기 / 메시지 보내기 / 메시지 기록 보기).
+**봇 준비물**: 봇을 초대할 때 **`applications.commands` 범위**가 들어가야 슬래시 명령을 등록할 수 있습니다.
+(초대 링크 만들 때 `bot` 과 `applications.commands` 를 같이 체크) 채널 권한은 메시지 보내기면 됩니다.
+접두사 명령까지 쓰려면 [Developer Portal](https://discord.com/developers/applications) 에서
+Bot → MESSAGE CONTENT INTENT 를 켜세요.
 
-동작 방식은 게이트웨이(WebSocket)가 아니라 **채널 폴링**입니다(기본 3초, `discord_poll`).
-표준 라이브러리에 WebSocket 클라이언트가 없어서인데, 사람이 손으로 치는 명령에는 충분합니다.
+**동작 방식**: 슬래시 명령은 게이트웨이(WebSocket)로 인터랙션을 받습니다. 표준 라이브러리에
+WebSocket 클라이언트가 없어서 `fastunnel/ws.py` 에 필요한 만큼만 직접 구현했습니다.
+인텐트는 하나도 요구하지 않습니다(`intents=0`). 접두사 명령은 채널 폴링(기본 3초, `discord_poll`)입니다.
+슬래시 명령을 끄려면 `--no-discord-slash`.
 
 ---
 
@@ -417,6 +434,7 @@ python -m fastunnel config path      # 탐색 경로 확인
   "discord_prefix": "!ft",
   "discord_admins": [],
   "discord_allow_guild_admins": true,
+  "discord_slash": true,
 
   "start_delay": 1.0,
   "restart": true,
@@ -463,6 +481,7 @@ python -m fastunnel config path      # 탐색 경로 확인
     --discord-control                          디스코드 봇으로 명령 받기
     --discord-prefix / --discord-admin         명령 접두사 / 관리자 ID(여러 번 가능)
     --no-discord-guild-admins                  디스코드 서버 관리자 자동 허용 끄기
+    --no-discord-slash                         슬래시 명령 끄기 (접두사 명령만)
     --authtoken / --region                     (ngrok)
     --start-delay    터널 순차 기동 간격(초)   (기본 1.0)
     --timeout        주소 확보 대기 시간(초)   (기본 90)
