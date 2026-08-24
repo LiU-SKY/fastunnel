@@ -242,7 +242,10 @@ try {
     if ($port -ne $addr.port) { Info "$($addr.port) 번이 사용 중이라 $port 번을 씁니다" }
 
     Info "연결하는 중 ..."
-    $args = @("access", "tcp", "--hostname", $addr.host, "--url", "localhost:$port")
+    # 반드시 127.0.0.1 로 명시한다. 'localhost' 로 두면 cloudflared 는 IPv4 에만 붙는데
+    # 윈도우에서 localhost 는 ::1(IPv6) 로 먼저 풀려서, 게임이 IPv6 를 먼저 시도하면
+    # 연결이 실패한다. 실제로 이것 때문에 "포트는 열렸는데 접속이 안 되는" 신고가 있었다.
+    $args = @("access", "tcp", "--hostname", $addr.host, "--url", "127.0.0.1:$port")
     $proc = Start-Process -FilePath $cf -ArgumentList $args -PassThru -WindowStyle Hidden
 
     if (-not (Wait-Port $port 40)) {
@@ -266,7 +269,10 @@ try {
     Say ""
     Say "  마인크래프트 -> 멀티플레이 -> 서버 추가에 이 주소를 넣으세요" "White"
     Say ""
-    Say "      localhost:$port" "Yellow"
+    Say "      127.0.0.1:$port" "Yellow"
+    Say ""
+    Info "'localhost' 말고 반드시 위 숫자 주소를 넣으세요. localhost 는 IPv6 로 먼저"
+    Info "  연결을 시도해서 실패할 수 있습니다."
     Say ""
     Warn "이 창을 닫으면 접속이 끊깁니다. 게임하는 동안 켜 두세요."
     Warn "마인크래프트는 반드시 이 창을 띄운 것과 같은 PC 에서 실행해야 합니다."

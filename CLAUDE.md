@@ -113,6 +113,7 @@ fastunnel/
 | **`.ps1` 에 BOM 이 없으면 윈도우 파워셸 5.1 이 cp949 로 읽어 한글이 깨지고 파싱 실패** | `client/mc-connect.ps1` 은 **UTF-8 with BOM + CRLF** 로 저장. 편집 후 BOM 유지 확인 |
 | **파워셸 함수가 배열을 반환하면 풀어헤쳐져 `Object[]` 가 됨** | `return ,$array` 로 콤마를 붙일 것. 안 그러면 `List[byte].AddRange` / `Stream.Write` 가 거부합니다 |
 | **`byte[] + byte[]` 도 `Object[]`** | `[byte[]](...)` 로 감쌀 것 |
+| **`cloudflared access tcp --url localhost:N` 은 IPv4(127.0.0.1)에만 바인딩** | 윈도우에서 `localhost` 는 `::1`(IPv6) 로 먼저 풀려 접속이 실패합니다. `--url 127.0.0.1:N` 으로 명시하고, 사용자에게도 **`127.0.0.1:N`** 을 안내하세요 |
 
 ### 방화벽 (문법은 실기 검증 완료)
 
