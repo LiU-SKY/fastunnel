@@ -4,7 +4,7 @@
 "무엇이 끝났고, 무엇이 실제로 검증됐고, 무엇이 안 됐는지"를 정리한 문서입니다.
 
 - 작성 시점: 2026-08-24
-- 버전: 1.0.1
+- 버전: 1.2.2
 - 상태: **동작하는 완성품**. 실기 검증 완료. 배포 가능.
 
 ---
@@ -72,6 +72,11 @@ fastunnel.example.json         설정 예시
 |---|---|
 | HTTP 터널 → 발급된 공개 URL 로 접속 | **HTTP 200** (로컬 서버 응답 확인) |
 | 주소 공개 시점에 이름 조회 성공 (NXDOMAIN 캐시 없음) | 통과. 실제 CLI 실행으로도 확인 |
+| **ngrok HTTP 실제 터널** | **HTTP 200** (`*.ngrok-free.dev` 주소로 접속 확인) |
+| ngrok TCP | 무료 계정은 카드 등록 필요(ERR_NGROK_8013). 코드 문제 아님 |
+| **리눅스 서버 실행** (Ubuntu 24.04 / Python 3.12) | doctor·오프라인 테스트·실제 터널 통과. ufw 백엔드 감지 |
+| **TCP 터널 데이터 경로** | `cloudflared access tcp` 로 되돌려 **HTTP 200** |
+| **디스코드 봇 알림 + 슬래시 명령** | 실제 서버에서 확인 (`/fastunnel` 등록, 게이트웨이 연결 유지) |
 | TCP 터널 → `cloudflared access tcp` 로 되돌려 접속 | **HTTP 200** (데이터 경로까지 확인) |
 | 포트 2개 동시 터널 | 2/2 주소 확보 |
 | ngrok 다운로드·압축해제·버전 인식 | 11.7MB → `3.39.11` |
@@ -108,7 +113,7 @@ fastunnel.example.json         설정 예시
 | **리눅스 방화벽 실제 적용** | 개발 환경이 윈도우뿐 | 리눅스/WSL 에서 `sudo python3 -m fastunnel run -p 8000 -v` 후 `ufw status` |
 | **관리자 권한 방화벽 실적용** | 세션에서 UAC 승인 불가 | 관리자 PowerShell 에서 실행 → `fastunnel firewall status` 로 규칙 확인 → 종료 후 사라지는지 |
 | **`--elevate` UAC 흐름** | 승인 창 조작 불가 | 일반 사용자로 `--elevate` 실행 → 새 창이 뜨고 방화벽이 적용되는지 |
-| **ngrok 실제 터널** | authtoken 없음 | 토큰 등록 후 `python -m fastunnel run -p 8000 --provider ngrok` |
+| **ngrok TCP 실기** | 무료 계정은 카드 등록 필요(ERR_NGROK_8013) | 카드 등록 후 `--provider ngrok --proto tcp` |
 | **디스코드 실제 전송** | 실제 웹훅 없음 | 웹훅 URL 만들고 `python -m fastunnel notify test` |
 | **macOS 전반** | 환경 없음 | 다운로드 URL(`darwin-*.tgz`)과 `open` 명령 확인 필요 |
 | **GUI 실제 조작감** | 화면 캡처 불가(다른 창이 찍힘) | 사람이 직접 열어서 확인 |
