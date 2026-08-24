@@ -16,6 +16,20 @@ from .base import BaseProvider, ProviderError, Tunnel
 
 NAME_PREFIX = "ft"
 
+ERROR_PREFIX = re.compile(r"^\s*(ERROR|CRITICAL|WARN)\s*:\s*", re.IGNORECASE)
+ERROR_CODE = re.compile(r"ERR_NGROK_\d+")
+
+# 실기에서 부딪힌 것들. "그래서 뭘 하면 되는지"를 같이 알려 준다.
+ERROR_HINTS = {
+    "ERR_NGROK_8013": (
+        "ngrok 무료 계정은 TCP 엔드포인트에 카드 등록을 요구합니다(청구는 없다고 안내합니다). "
+        "카드를 등록하지 않으려면 --proto http 로 열거나 cloudflared 를 쓰세요."
+    ),
+    "ERR_NGROK_105": "authtoken 이 올바르지 않습니다. ngrok config add-authtoken <토큰> 으로 등록하세요.",
+    "ERR_NGROK_108": "이미 다른 ngrok 세션이 떠 있습니다. 무료 계정은 동시 세션이 1개입니다.",
+    "ERR_NGROK_4018": "authtoken 이 없습니다. --authtoken 이나 NGROK_AUTHTOKEN 으로 넘기세요.",
+}
+
 
 def default_config_paths() -> List[str]:
     """ngrok이 기본으로 읽는 설정 파일 경로 후보."""
@@ -55,6 +69,7 @@ class NgrokProvider(BaseProvider):
         ]
         self._by_name = {"%s-%d" % (NAME_PREFIX, t.port): t for t in self.tunnels}
         self.last_error = ""
+        self.error_code = ""
         self._log = open(self.log_path, "a", encoding="utf-8", errors="replace")
 
     # ------------------------------------------------------------------
@@ -141,13 +156,41 @@ class NgrokProvider(BaseProvider):
                     pass
                 lowered = line.lower()
                 if "err=" in lowered or "lvl=eror" in lowered or "error" in lowered:
-                    match = re.search(r'err="?([^"]+)"?', line)
-                    message = match.group(1) if match else line
-                    if message != self.last_error:
-                        self.last_error = message[:300]
-                        util.debug("ngrok: %s" % self.last_error)
+                    self._note_error(line)
         except Exception as exc:  # noqa: BLE001
             util.debug("ngrok 출력 읽기 종료: %s" % exc)
+
+    def _note_error(self, line: str) -> None:
+        """ngrok 오류 줄에서 쓸 만한 설명을 뽑아 둔다.
+
+        ngrok 은 오류 하나를 여러 줄로 나눠 찍는다.
+
+            ERROR:  failed to start tunnel: You must add a credit or debit card …
+            ERROR:  Add a card to your account here: …
+            ERROR:
+            ERROR:  ERR_NGROK_8013
+
+        예전에는 볼 때마다 덮어써서 마지막 줄인 `ERROR:` 만 남았다. 사용자에게는
+        "ngrok 오류: ERROR:" 라고만 보여서 아무 도움이 안 됐다.
+        그래서 **가장 설명이 긴 것**을 남긴다. logfmt 의 `err="…"` 에는 전체 문장이
+        한 번에 들어 있어서 보통 그게 이긴다.
+        """
+        match = re.search(r'err="([^"]*)"', line)
+        message = match.group(1) if match else ERROR_PREFIX.sub("", line)
+        message = message.replace("\\n", " ").replace("\\r", " ")
+        message = " ".join(message.split()).strip('" ')
+        if len(message) < 8:
+            return          # 'ERROR:' 만 있는 빈 줄
+        code = ERROR_CODE.search(message)
+        if code:
+            self.error_code = code.group(0)
+        if len(message) > len(self.last_error):
+            self.last_error = message[:400]
+            util.debug("ngrok: %s" % self.last_error)
+
+    def error_hint(self) -> str:
+        """자주 나오는 ngrok 오류에 대한 '그래서 뭘 하면 되는지'."""
+        return ERROR_HINTS.get(self.error_code, "")
 
     # ------------------------------------------------------------------
     def _fetch_api(self) -> Optional[List[Dict[str, Any]]]:
@@ -170,6 +213,9 @@ class NgrokProvider(BaseProvider):
                     tunnel.error = self.last_error or "ngrok 프로세스가 종료되었습니다."
             if self.last_error:
                 util.warn("ngrok 오류: %s" % self.last_error)
+                hint = self.error_hint()
+                if hint:
+                    util.info("  %s" % hint)
             return True
 
         items = self._fetch_api()

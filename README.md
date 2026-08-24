@@ -165,6 +165,18 @@ python -m fastunnel run -p 8000 --duration 1800
 | cloudflared | 접속 측에서 `cloudflared access tcp` 실행 필요 | 브라우저로 URL 바로 열기 |
 | ngrok | `호스트:포트` 로 바로 접속 | HTTPS URL 바로 열기 |
 
+### 제공자별 TCP 비교
+
+|  | cloudflared | ngrok |
+|---|---|---|
+| 접속하는 쪽에 도구 필요? | **필요** (`cloudflared access tcp`) | **불필요** (`host:port` 로 바로 접속) |
+| 계정 | 불필요 | authtoken 필요 |
+| 무료로 TCP 사용 | 가능 | **카드 등록 필요** (`ERR_NGROK_8013`, 청구는 없다고 안내) |
+
+즉 **상대방에게 아무것도 설치시키지 않고 TCP 를 열려면 ngrok + 카드 등록**이 필요하고,
+아무 등록 없이 쓰려면 cloudflared 를 쓰되 접속 측에서 `cloudflared access tcp` 를 실행해야 합니다.
+웹 서비스라면 `--proto http` 가 가장 편합니다 — 양쪽 다 브라우저만으로 됩니다.
+
 ### cloudflared + TCP 로 접속하는 방법
 
 터널을 연 쪽에서 안내되는 명령을 **접속하는 쪽 PC**에서 실행하면 로컬 포트로 연결됩니다.

@@ -14,6 +14,9 @@ from _harness import Results, isolated_home
 isolated_home("core")
 
 from fastunnel import config as config_mod, firewall as fw, util  # noqa: E402
+from fastunnel.providers.ngrok import ERROR_HINTS  # noqa: E402
+
+ERROR_HINT_105 = ERROR_HINTS["ERR_NGROK_105"]
 
 
 def run() -> bool:
@@ -147,6 +150,49 @@ def run() -> bool:
         util.resolve_public = real_resolve
 
     r.check("잘못된 주소 probe", util.probe_url("://나쁜주소")[0] == 0)
+
+    # ---------------- ngrok 오류 메시지 ----------------
+    # 예전에는 오류 줄을 볼 때마다 덮어써서 마지막 줄인 'ERROR:' 만 남았다.
+    # 사용자에게 "ngrok 오류: ERROR:" 라고만 보여서 아무 도움이 안 됐다.
+    from fastunnel.providers.ngrok import NgrokProvider
+
+    # 생성자는 로그 파일을 여는 등 곁가지가 많아서, 파싱만 보려고 빈 객체에 필드만 심는다.
+    prov = object.__new__(NgrokProvider)
+    prov.last_error = ""
+    prov.error_code = ""
+    for line in (
+        'ERROR:  failed to start tunnel: You must add a credit or debit card before you can '
+        'use TCP endpoints on a free account.',
+        "ERROR:  Add a card to your account here: https://dashboard.ngrok.com/settings",
+        "ERROR:",
+        "ERROR:  ERR_NGROK_8013",
+    ):
+        prov._note_error(line)
+    r.check("설명이 있는 줄이 남는다", "credit or debit card" in prov.last_error,
+            prov.last_error[:45])
+    r.check("빈 'ERROR:' 줄에 덮이지 않는다", prov.last_error != "ERROR:")
+    r.check("오류 코드 인식", prov.error_code == "ERR_NGROK_8013", prov.error_code)
+    r.check("코드에 맞는 힌트", "카드" in prov.error_hint(), prov.error_hint()[:30])
+
+    prov2 = object.__new__(NgrokProvider)
+    prov2.last_error = ""
+    prov2.error_code = ""
+    # ngrok 의 logfmt 줄은 여러 줄짜리 메시지를 \n 이스케이프로 한 줄에 담아 온다.
+    escaped = "\\n"
+    prov2._note_error('t=... lvl=eror msg="session closing" '
+                      'err="failed to start tunnel: authentication failed'
+                      + escaped + 'ERR_NGROK_105"')
+    r.check("logfmt err= 에서 뽑아낸다", "authentication failed" in prov2.last_error,
+            prov2.last_error[:45])
+    r.check("줄바꿈 이스케이프 정리", escaped not in prov2.last_error)
+    r.check("코드에 맞는 힌트(105)", prov2.error_hint() == ERROR_HINT_105,
+            prov2.error_hint()[:30])
+
+    prov3 = object.__new__(NgrokProvider)
+    prov3.last_error = ""
+    prov3.error_code = ""
+    prov3._note_error("ERROR:  뭔가 알 수 없는 문제가 생겼습니다")
+    r.check("모르는 코드면 힌트 없음", prov3.error_hint() == "")
 
     # ---------------- 시그널 핸들러 ----------------
     from fastunnel import cli
