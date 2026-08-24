@@ -35,6 +35,11 @@ DEFAULTS: Dict[str, Any] = {
     "mention": "",                   # 예: "<@&1234567890>" 또는 "@here"
     "webhooks": [],                  # [{"type":"slack","url":...}, ...]
     "notify_on_change": True,
+    # 디스코드 봇으로 명령 받기 (discord_bot_token + discord_channel_id 필요)
+    "discord_control": False,
+    "discord_prefix": "!ft",         # 명령 접두사
+    "discord_admins": [],            # 터널을 여닫을 수 있는 사용자 ID 목록
+    "discord_poll": 3,               # 채널 확인 간격(초)
     # ngrok 전용
     "ngrok_authtoken": "",
     "ngrok_region": "",
@@ -55,6 +60,9 @@ ENV_MAP = {
     "DISCORD_BOT_TOKEN": "discord_bot_token",
     "FASTUNNEL_DISCORD_CHANNEL_ID": "discord_channel_id",
     "DISCORD_CHANNEL_ID": "discord_channel_id",
+    "FASTUNNEL_DISCORD_CONTROL": "discord_control",
+    "FASTUNNEL_DISCORD_PREFIX": "discord_prefix",
+    "FASTUNNEL_DISCORD_ADMINS": "discord_admins",
     "FASTUNNEL_MENTION": "mention",
     "NGROK_AUTHTOKEN": "ngrok_authtoken",
     "FASTUNNEL_NGROK_REGION": "ngrok_region",
@@ -66,6 +74,7 @@ BOOL_KEYS = {
     "firewall_persist",
     "notify",
     "notify_on_change",
+    "discord_control",
 }
 
 SECRET_KEYS = {"discord_webhook", "discord_bot_token", "ngrok_authtoken"}
@@ -157,7 +166,7 @@ def normalize(data: Dict[str, Any]) -> Dict[str, Any]:
             data[key] = float(data.get(key, DEFAULTS[key]))
         except (TypeError, ValueError):
             data[key] = DEFAULTS[key]
-    for key in ("ready_timeout", "max_restarts", "dns_wait"):
+    for key in ("ready_timeout", "max_restarts", "dns_wait", "discord_poll"):
         try:
             data[key] = int(data.get(key, DEFAULTS[key]))
         except (TypeError, ValueError):
@@ -165,6 +174,14 @@ def normalize(data: Dict[str, Any]) -> Dict[str, Any]:
 
     if not isinstance(data.get("webhooks"), list):
         data["webhooks"] = []
+
+    # 환경 변수로 넘기면 문자열이라 "111,222" 형태도 받아 준다.
+    admins = data.get("discord_admins", [])
+    if isinstance(admins, str):
+        admins = [part for part in admins.replace(";", ",").split(",")]
+    if not isinstance(admins, (list, tuple)):
+        admins = []
+    data["discord_admins"] = [str(x).strip() for x in admins if str(x).strip()]
     return data
 
 
@@ -186,6 +203,8 @@ EXAMPLE_CONFIG = {
         "proto": "tcp | http | https",
         "update": "auto | skip | force | ask",
         "dns_wait": "주소가 공개 DNS에 등록될 때까지 기다리는 초. 0이면 기다리지 않습니다.",
+        "discord_control": "디스코드 봇으로 명령을 받으려면 true. 봇 토큰과 채널 ID가 필요합니다.",
+        "discord_admins": "터널을 여닫을 수 있는 디스코드 사용자 ID 목록. 예: [\"123456789\"]",
     },
     "provider": "cloudflared",
     "ports": "8000-8005,9000",
@@ -200,6 +219,9 @@ EXAMPLE_CONFIG = {
     "discord_channel_id": "",
     "mention": "",
     "webhooks": [],
+    "discord_control": False,
+    "discord_prefix": "!ft",
+    "discord_admins": [],
     "ngrok_authtoken": "",
 }
 

@@ -555,14 +555,30 @@ def local_resolves(host: str) -> bool:
         return False
 
 
-def wait_public_dns(host: str, timeout: float = 45.0, tick: float = 2.0) -> str:
+def wait_public_dns(
+    host: str,
+    timeout: float = 45.0,
+    tick: float = 2.0,
+    should_stop: Optional[Any] = None,
+) -> str:
     """주소가 공개 DNS 에 등록될 때까지 기다린다.
 
-    반환: "ok" | "timeout" | "unknown"(DoH 가 막혀 확인 불가)
+    should_stop 은 "이제 그만"을 알려 주는 콜러블. 종료 중에 이 대기가 붙잡고 있으면
+    정리가 늦어지므로 매 번 확인한다.
+
+    반환: "ok" | "timeout" | "unknown"(DoH 가 막혀 확인 불가) | "aborted"
     """
+    def stopping() -> bool:
+        try:
+            return bool(should_stop and should_stop())
+        except Exception:  # noqa: BLE001 - 판정 실패는 '계속'으로 본다
+            return False
+
     started = time.time()
     deadline = started + max(0.0, timeout)
     while True:
+        if stopping():
+            return "aborted"
         verdict, _ips = resolve_public(host)
         if verdict == "ok":
             return "ok"
@@ -570,12 +586,18 @@ def wait_public_dns(host: str, timeout: float = 45.0, tick: float = 2.0) -> str:
             # 확인할 방법이 없다. 로컬 조회는 캐시를 오염시키므로 하지 않고,
             # 등록에 걸리는 만큼만 기다렸다가 그냥 진행한다.
             rest = min(DNS_BLIND_GRACE, timeout) - (time.time() - started)
-            if rest > 0:
-                time.sleep(rest)
-            return "unknown"
+            while rest > 0 and not stopping():
+                time.sleep(min(0.5, rest))
+                rest -= 0.5
+            return "aborted" if stopping() else "unknown"
         if time.time() >= deadline:
             return "timeout"
-        time.sleep(tick)
+        waited = 0.0
+        while waited < tick:
+            if stopping():
+                return "aborted"
+            time.sleep(min(0.25, tick - waited))
+            waited += 0.25
 
 
 def _get_via_ip(ip: str, host: str, path: str, secure: bool, timeout: int) -> int:

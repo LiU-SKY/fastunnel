@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import argparse
 import os
+import queue
 import signal
 import sys
 import time
 from typing import Any, Dict, List, Optional, Sequence
 
-from . import __version__, binaries, config as config_mod, firewall as fw_mod, util
+from . import __version__, binaries, config as config_mod, control as control_mod
+from . import firewall as fw_mod, util
 from .notify import Notifier
 from .runner import SessionError, TunnelSession
 
@@ -168,6 +170,8 @@ def build_run_config(args: argparse.Namespace):
         "discord_bot_token": args.bot_token,
         "discord_channel_id": args.channel_id,
         "mention": args.mention,
+        "discord_prefix": getattr(args, "discord_prefix", None),
+        "discord_admins": getattr(args, "discord_admins", None),
         "ngrok_authtoken": args.authtoken,
         "ngrok_region": args.region,
     }
@@ -177,9 +181,66 @@ def build_run_config(args: argparse.Namespace):
         cli_overrides["firewall_persist"] = True
     if args.no_notify:
         cli_overrides["notify"] = False
+    if getattr(args, "discord_control", False):
+        cli_overrides["discord_control"] = True
     if args.no_restart:
         cli_overrides["restart"] = False
     return config_mod.load(cli_overrides, args.config)
+
+
+class _RunActions(control_mod.ControlActions):
+    """디스코드 명령을 실행 중인 세션에 연결한다.
+
+    조회 명령은 바로 답하고, 터널을 건드리는 명령은 큐에 넣어 **메인 루프가** 처리한다.
+    폴링 스레드에서 세션을 여닫으면 감시 루프와 부딪힌다.
+    """
+
+    def __init__(self, holder: Dict[str, Any], requests: "queue.Queue") -> None:
+        self.holder = holder
+        self.requests = requests
+
+    def _session(self):
+        return self.holder.get("session")
+
+    def status(self) -> str:
+        session = self._session()
+        if session is None:
+            return "터널이 실행 중이 아닙니다."
+        return control_mod.format_tunnels(session.tunnels, "**%s**" % session.summary())
+
+    def addresses(self) -> str:
+        session = self._session()
+        if session is None:
+            return "터널이 실행 중이 아닙니다."
+        return control_mod.format_tunnels(session.tunnels, only_address=True)
+
+    def restart(self) -> str:
+        self.requests.put(("restart", ""))
+        return "터널을 다시 엽니다. 주소가 바뀌니 잠시 뒤 새 주소를 알려 드릴게요."
+
+    def open(self, ports: str) -> str:
+        try:
+            parsed = util.parse_ports(ports)
+        except util.PortSpecError as exc:
+            return "포트를 해석할 수 없습니다: %s" % exc
+        self.requests.put(("open", util.format_ranges(parsed)))
+        return "포트 `%s` 로 다시 엽니다. 잠시만요." % util.format_ranges(parsed)
+
+    def shutdown(self) -> str:
+        self.requests.put(("stop", ""))
+        return "터널을 닫고 종료합니다."
+
+
+def _reopen(session, cfg, ports: str, extra_args: str):
+    """실행 중인 세션을 닫고 (필요하면 다른 포트로) 새로 연다."""
+    session.stop(notify=False)
+    if ports:
+        cfg = config_mod.from_dict(dict(cfg.data, ports=ports), list(cfg.sources) + ["디스코드 명령"])
+    fresh = TunnelSession(cfg, extra_args=extra_args)
+    fresh.prepare()
+    fresh.start()
+    fresh.wait_ready()
+    return fresh, cfg
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -231,6 +292,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     # 3) 터널 시작 ------------------------------------------------------
     _install_signal_handlers()
     exit_code = 0
+    control = None
     try:
         util.info("터널을 시작합니다 …")
         session.start()
@@ -244,6 +306,20 @@ def cmd_run(args: argparse.Namespace) -> int:
         util.debug("상태 파일: %s" % session.save_state(args.out))
 
         session.notify_started()
+
+        # 3-1) 디스코드 명령 수신 ---------------------------------------
+        holder: Dict[str, Any] = {"session": session}
+        requests: "queue.Queue" = queue.Queue()
+        control = None
+        if cfg.bool("discord_control"):
+            control = control_mod.DiscordControl(cfg, _RunActions(holder, requests))
+            reason = control.available()
+            if reason:
+                util.warn("디스코드 명령 수신을 켤 수 없습니다: %s" % reason)
+                control = None
+            elif not control.start():
+                control = None
+
         util.info("실행 중입니다. 종료하려면 %s 를 누르세요." % util.bold("Ctrl+C"))
 
         # 4) 감시 루프 --------------------------------------------------
@@ -256,12 +332,46 @@ def cmd_run(args: argparse.Namespace) -> int:
             if duration and time.time() - started >= duration:
                 util.info("지정한 실행 시간(%.0fs)이 지나 종료합니다." % duration)
                 break
+
+            # 디스코드에서 온 요청 처리 (세션을 여닫는 건 이 스레드에서만 한다)
+            action = ""
+            try:
+                action, action_arg = requests.get_nowait()
+            except queue.Empty:
+                pass
+            if action == "stop":
+                util.info("디스코드 명령으로 종료합니다.")
+                break
+            if action in ("restart", "open"):
+                label = "포트 %s 로 다시 엽니다" % action_arg if action_arg else "터널을 다시 엽니다"
+                util.info("디스코드 명령: %s" % label)
+                try:
+                    session, cfg = _reopen(session, cfg, action_arg, args.extra_args or "")
+                except SessionError as exc:
+                    util.error(str(exc))
+                    if control:
+                        control.reply("다시 열지 못했습니다: %s" % exc)
+                    break
+                holder["session"] = session
+                print_tunnels(session)
+                session.save_state(args.out)
+                session.notify_started()
+                if control:
+                    control.reply(control_mod.format_tunnels(
+                        session.tunnels, "**다시 열었습니다** · %s" % session.summary()))
+                last_notify = time.time()
+                pending_change = False
+                continue
+
             if session.poll():
                 pending_change = True
                 session.save_state(args.out)
             if pending_change and time.time() - last_notify > 5:
                 print_tunnels(session)
                 session.notify_changed()
+                if control:
+                    control.reply(control_mod.format_tunnels(
+                        session.tunnels, "**주소가 바뀌었습니다**"))
                 last_notify = time.time()
                 pending_change = False
     except KeyboardInterrupt:
@@ -279,6 +389,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             traceback.print_exc()
         exit_code = 1
     finally:
+        if control is not None:
+            control.stop()
         util.info("터널을 정리합니다 …")
         session.stop()
         util.ok("정리 완료")
@@ -562,6 +674,18 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--bot-token", help="디스코드 봇 토큰")
     run.add_argument("--channel-id", help="디스코드 채널 ID")
     run.add_argument("--mention", help="알림에 붙일 멘션 (예: @here)")
+    run.add_argument(
+        "--discord-control",
+        action="store_true",
+        help="디스코드 봇으로 명령 받기 (봇 토큰 + 채널 ID 필요)",
+    )
+    run.add_argument("--discord-prefix", help="디스코드 명령 접두사 (기본: !ft)")
+    run.add_argument(
+        "--discord-admin",
+        action="append",
+        dest="discord_admins",
+        help="터널을 여닫을 수 있는 디스코드 사용자 ID (여러 번 지정 가능)",
+    )
     run.add_argument("--authtoken", help="ngrok authtoken")
     run.add_argument("--region", help="ngrok region (us, eu, ap, au, sa, jp, in)")
     run.add_argument("--start-delay", type=float, help="터널 순차 기동 간격(초)")

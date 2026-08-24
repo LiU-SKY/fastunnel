@@ -2,6 +2,26 @@
 
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/) 를 따릅니다.
 
+## [1.1.0] - 2026-08-24
+
+### 추가
+
+- **디스코드 봇으로 명령 받기** (`control.py`). 채널에서 `!ft 상태` / `주소` / `재시작` /
+  `열기 8000-8005` / `종료` 로 터널을 조종한다. 한국어·영어 명령 모두 인식.
+  게이트웨이(WebSocket) 대신 채널 폴링을 쓴다 — 표준 라이브러리만 쓰기 위해서다.
+- 설정 `discord_control` / `discord_prefix` / `discord_admins` / `discord_poll`,
+  인자 `--discord-control` / `--discord-prefix` / `--discord-admin`,
+  환경변수 `FASTUNNEL_DISCORD_CONTROL` / `_PREFIX` / `_ADMINS`
+- 터널을 여닫는 명령은 `discord_admins` 에 등록된 사용자만 쓸 수 있다.
+  비어 있으면 조회 명령만 동작한다(채널 멤버 아무나 포트를 열 수 있으면 안 되므로)
+- 명령으로 주소가 바뀌면 채널에 새 주소를 알린다
+
+### 수정
+
+- 종료 중에 공개 DNS 대기가 정리를 붙잡지 않도록 중단 신호를 받는다
+
+---
+
 ## [1.0.1] - 2026-08-24
 
 ### 수정

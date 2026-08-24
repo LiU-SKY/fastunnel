@@ -7,6 +7,7 @@ import json
 import os
 import signal
 import sys
+import time
 
 from _harness import Results, isolated_home
 
@@ -136,6 +137,12 @@ def run() -> bool:
         r.check("등록되면 즉시 ok", util.wait_public_dns("x.example", 5, 0.05) == "ok")
         util.resolve_public = lambda host, timeout=8: ("unknown", [])
         r.check("DoH 막히면 unknown", util.wait_public_dns("x.example", 0.3, 0.05) == "unknown")
+        # 종료 중이면 대기를 붙잡고 있으면 안 된다 (정리가 늦어진다)
+        util.resolve_public = lambda host, timeout=8: ("missing", [])
+        began = time.time()
+        verdict = util.wait_public_dns("x.example", 30, 0.05, should_stop=lambda: True)
+        r.check("종료 중이면 즉시 중단",
+                verdict == "aborted" and time.time() - began < 1.0, verdict)
     finally:
         util.resolve_public = real_resolve
 

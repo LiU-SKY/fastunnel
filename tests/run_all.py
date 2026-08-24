@@ -2,7 +2,7 @@
 """전체 테스트 실행기.
 
     python tests/run_all.py                 # 전부
-    python tests/run_all.py --no-network    # 네트워크 없이 (core + notify)
+    python tests/run_all.py --no-network    # 네트워크 없이 (core + notify + control)
     python tests/run_all.py --no-gui        # GUI 제외
     python tests/run_all.py core notify     # 원하는 것만
 
@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 MODULES = [
     ("core", "test_core", "네트워크 불필요"),
     ("notify", "test_notify", "로컬 수신 서버 사용"),
+    ("control", "test_control", "로컬 수신 서버 사용 - 디스코드 명령"),
     ("tunnel", "test_tunnel", "네트워크 필요 - 실제 터널을 엽니다"),
     ("gui", "test_gui", "화면 환경 필요 - 창은 띄우지 않습니다"),
 ]

@@ -294,6 +294,51 @@ python -m fastunnel run -p 8000 --mention "@here"     # 멘션 붙이기
 python -m fastunnel run -p 8000 --no-notify           # 알림 끄기
 ```
 
+### 디스코드 봇으로 명령 받기
+
+봇 토큰이 있으면 알림만 받는 게 아니라 **채널에서 명령을 내려** 터널을 조종할 수 있습니다.
+서버에 원격 접속하지 않고 디스코드만으로 주소 확인·재시작이 됩니다.
+
+```bash
+python -m fastunnel run -p 8000-8005   --discord-control --discord-admin 여러분의_디스코드_사용자_ID
+```
+
+또는 설정 파일에:
+
+```json
+{
+  "discord_bot_token": "봇 토큰",
+  "discord_channel_id": "명령을 받을 채널 ID",
+  "discord_control": true,
+  "discord_prefix": "!ft",
+  "discord_admins": ["여러분의 디스코드 사용자 ID"]
+}
+```
+
+| 명령 | 하는 일 | 권한 |
+|---|---|---|
+| `!ft 상태` | 열려 있는 터널 목록 | 누구나 |
+| `!ft 주소` | 공개 주소만 다시 보기 | 누구나 |
+| `!ft 재시작` | 터널을 다시 열기 (주소가 바뀜) | 관리자 |
+| `!ft 열기 8000-8005` | 지정한 포트로 다시 열기 | 관리자 |
+| `!ft 종료` | 터널을 닫고 프로그램 종료 | 관리자 |
+| `!ft 도움말` | 명령 목록 | 누구나 |
+
+영어 명령(`status` `url` `restart` `open` `stop` `help`)도 그대로 받습니다.
+
+> **관리자를 꼭 등록하세요.** `discord_admins` 가 비어 있으면 조회 명령만 동작하고
+> 터널을 여닫는 명령은 전부 거부됩니다. 채널에 있는 아무나 이 PC 의 포트를 열 수 있으면 안 되니까요.
+> 자기 ID 를 모르면 아무 명령이나 쳐 보세요. 거부 메시지에 본인 ID 가 같이 나옵니다.
+
+**봇 준비물**: [Discord Developer Portal](https://discord.com/developers/applications) 에서
+Bot → **MESSAGE CONTENT INTENT 켜기**(안 켜면 메시지 내용이 빈 값으로 와서 명령을 못 읽습니다) →
+봇을 서버에 초대(권한: 메시지 보기 / 메시지 보내기 / 메시지 기록 보기).
+
+동작 방식은 게이트웨이(WebSocket)가 아니라 **채널 폴링**입니다(기본 3초, `discord_poll`).
+표준 라이브러리에 WebSocket 클라이언트가 없어서인데, 사람이 손으로 치는 명령에는 충분합니다.
+
+---
+
 ### 슬랙 · 텔레그램 · 범용 웹훅
 
 `fastunnel.json` 의 `webhooks` 배열에 추가하면 함께 전송됩니다.
@@ -349,6 +394,10 @@ python -m fastunnel config path      # 탐색 경로 확인
   "discord_webhook": "https://discord.com/api/webhooks/...",
   "mention": "",
 
+  "discord_control": false,
+  "discord_prefix": "!ft",
+  "discord_admins": [],
+
   "start_delay": 1.0,
   "restart": true,
   "max_restarts": 5,
@@ -391,6 +440,8 @@ python -m fastunnel config path      # 탐색 경로 확인
     --bin            터널 실행 파일 경로 직접 지정
     --no-firewall / --firewall-direction / --firewall-persist / --elevate
     --no-notify / --webhook / --bot-token / --channel-id / --mention
+    --discord-control                          디스코드 봇으로 명령 받기
+    --discord-prefix / --discord-admin         명령 접두사 / 관리자 ID(여러 번 가능)
     --authtoken / --region                     (ngrok)
     --start-delay    터널 순차 기동 간격(초)   (기본 1.0)
     --timeout        주소 확보 대기 시간(초)   (기본 90)

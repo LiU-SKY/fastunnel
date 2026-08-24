@@ -212,10 +212,11 @@ class TunnelSession:
 
         result = "ok"
         started = time.time()
+        stopping = lambda: self._stopped        # noqa: E731 - 종료 중이면 대기를 즉시 접는다
         for index, host in enumerate(hosts, 1):
             util.progress("공개 DNS 등록 대기 중 %d/%d" % (index - 1, len(hosts)))
             left = wait - (time.time() - started)
-            verdict = util.wait_public_dns(host, max(0.0, left))
+            verdict = util.wait_public_dns(host, max(0.0, left), should_stop=stopping)
             if verdict != "ok":
                 result = verdict
                 break
@@ -230,6 +231,8 @@ class TunnelSession:
             )
         elif result == "unknown":
             util.debug("공개 DNS 확인 불가(DoH 차단). 대기만 하고 진행합니다.")
+        elif result == "aborted":
+            util.debug("종료 중이라 공개 DNS 대기를 중단했습니다.")
         return result
 
     def poll(self) -> bool:

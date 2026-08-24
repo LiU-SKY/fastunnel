@@ -65,6 +65,7 @@ fastunnel/
 ├── binaries.py     cloudflared/ngrok 자동 다운로드·버전확인·업데이트
 ├── firewall.py     netsh / ufw / firewalld / iptables 규칙 추가·원복
 ├── notify.py       디스코드 웹훅·봇, 슬랙, 텔레그램, 범용 웹훅
+├── control.py      디스코드 봇 명령 수신 (채널 폴링). 조종 동작은 프런트엔드가 구현
 ├── util.py         로깅·포트파싱·HTTP·다운로드·권한 등 공용 도구
 └── providers/
     ├── base.py         BaseProvider / Tunnel 공통 인터페이스
@@ -161,6 +162,17 @@ fastunnel/
 3. `providers/__init__.py` 의 `PROVIDERS` 에 등록
 4. `binaries.py` 에 다운로드 URL 추가
 5. `cli.py` 의 `--provider` choices, GUI 콤보박스 값에 추가
+
+### 디스코드 명령 다루기
+
+- 게이트웨이(WebSocket)를 쓰지 않습니다. **표준 라이브러리에 WebSocket 클라이언트가 없어서**
+  채널을 폴링합니다(`discord_poll`, 기본 3초). 이 제약을 깨려면 먼저 사용자에게 물어보세요.
+- **터널을 여닫는 명령은 `discord_admins` 에 있는 사람만** 쓸 수 있습니다. 비어 있으면 조회만 됩니다.
+  채널 멤버 아무나 포트를 열 수 있으면 안 되므로 이 기본값을 완화하지 마세요.
+- **폴링 스레드에서 세션을 여닫지 마세요.** 감시 루프와 부딪힙니다.
+  `_RunActions` 가 큐에 넣고 `cmd_run` 의 메인 루프가 처리합니다. 이 구조를 유지하세요.
+- 봇 자신이 보낸 메시지는 무시해야 합니다(`/users/@me` 로 자기 ID 확인). 안 그러면 무한 되먹임입니다.
+- MESSAGE CONTENT INTENT 가 꺼져 있으면 `content` 가 빈 문자열로 옵니다. 이때는 조용히 무시합니다.
 
 ### 새 알림 채널 추가
 
