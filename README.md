@@ -319,15 +319,23 @@ python -m fastunnel run -p 8000-8005   --discord-control --discord-admin 여러�
 |---|---|---|
 | `!ft 상태` | 열려 있는 터널 목록 | 누구나 |
 | `!ft 주소` | 공개 주소만 다시 보기 | 누구나 |
-| `!ft 재시작` | 터널을 다시 열기 (주소가 바뀜) | 관리자 |
-| `!ft 열기 8000-8005` | 지정한 포트로 다시 열기 | 관리자 |
-| `!ft 종료` | 터널을 닫고 프로그램 종료 | 관리자 |
+| `!ft 재시작` | 터널을 다시 열기 (주소가 바뀜) | 서버 관리자 |
+| `!ft 열기 8000-8005` | 지정한 포트로 다시 열기 | 서버 관리자 |
+| `!ft 종료` | 터널을 닫고 프로그램 종료 | 서버 관리자 |
 | `!ft 도움말` | 명령 목록 | 누구나 |
 
 영어 명령(`status` `url` `restart` `open` `stop` `help`)도 그대로 받습니다.
 
-> **관리자를 꼭 등록하세요.** `discord_admins` 가 비어 있으면 조회 명령만 동작하고
-> 터널을 여닫는 명령은 전부 거부됩니다. 채널에 있는 아무나 이 PC 의 포트를 열 수 있으면 안 되니까요.
+**누가 관리자인가**: 다음 둘 중 하나면 터널을 여닫을 수 있습니다.
+
+1. **디스코드 서버에서 관리자 권한(Administrator)을 가졌거나 서버 소유자** — 기본으로 허용됩니다.
+   따로 ID 를 등록할 필요가 없습니다.
+2. `discord_admins` 에 사용자 ID 가 등록된 사람
+
+서버 관리자 자동 허용을 끄려면 `discord_allow_guild_admins: false` (또는 `--no-discord-guild-admins`).
+그러면 `discord_admins` 목록만 봅니다.
+
+> 채널에 있는 아무나 이 PC 의 포트를 열 수 있으면 안 되므로, 둘 다 아닌 사람은 조회 명령만 됩니다.
 > 자기 ID 를 모르면 아무 명령이나 쳐 보세요. 거부 메시지에 본인 ID 가 같이 나옵니다.
 
 **이미 돌아가는 봇이 있다면** 토큰을 직접 옮겨 적지 말고 도구를 쓰세요.
@@ -408,6 +416,7 @@ python -m fastunnel config path      # 탐색 경로 확인
   "discord_control": false,
   "discord_prefix": "!ft",
   "discord_admins": [],
+  "discord_allow_guild_admins": true,
 
   "start_delay": 1.0,
   "restart": true,
@@ -453,6 +462,7 @@ python -m fastunnel config path      # 탐색 경로 확인
     --no-notify / --webhook / --bot-token / --channel-id / --mention
     --discord-control                          디스코드 봇으로 명령 받기
     --discord-prefix / --discord-admin         명령 접두사 / 관리자 ID(여러 번 가능)
+    --no-discord-guild-admins                  디스코드 서버 관리자 자동 허용 끄기
     --authtoken / --region                     (ngrok)
     --start-delay    터널 순차 기동 간격(초)   (기본 1.0)
     --timeout        주소 확보 대기 시간(초)   (기본 90)

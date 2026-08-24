@@ -4,8 +4,8 @@
 채널 메시지를 몇 초 간격으로 읽어 오는 방식이면 urllib 만으로 되고, 사람이 손으로 치는
 명령 빈도에는 충분하다. 폴링 간격은 `discord_poll`(기본 3초).
 
-권한: 포트를 열고 닫는 명령은 `discord_admins` 에 등록된 사용자 ID 만 쓸 수 있다.
-비어 있으면 조회 명령만 받는다. 채널에 있는 아무나 이 PC 의 포트를 열 수 있으면 안 되기 때문이다.
+권한: 포트를 열고 닫는 명령은 **디스코드 서버 관리자**(Administrator 권한 또는 서버 소유자)이거나
+`discord_admins` 에 등록된 사용자만 쓸 수 있다. 둘 다 아니면 조회 명령만 받는다. 채널에 있는 아무나 이 PC 의 포트를 열 수 있으면 안 되기 때문이다.
 """
 from __future__ import annotations
 
@@ -16,6 +16,12 @@ from typing import Any, Dict, List, Optional
 from . import util
 
 DISCORD_API = "https://discord.com/api/v10"
+
+ADMINISTRATOR = 1 << 3      # 디스코드 권한 비트: 관리자
+
+# 권한 확인은 REST 호출이라 매번 하면 레이트리밋에 걸린다. 짧게 캐시한다.
+PERM_CACHE_TTL = 60.0
+ROLE_CACHE_TTL = 300.0
 
 # 명령 이름 → 표준 동작. 한국어/영어를 같이 받는다.
 ALIASES = {
@@ -75,6 +81,7 @@ class DiscordControl:
         self.admins = [
             str(x).strip() for x in (config.get("discord_admins", []) or []) if str(x).strip()
         ]
+        self.allow_guild_admins = bool(config.bool("discord_allow_guild_admins"))
         try:
             self.poll_interval = max(1.0, float(config.get("discord_poll", 3) or 3))
         except (TypeError, ValueError):
@@ -84,6 +91,11 @@ class DiscordControl:
         self._thread: Optional[threading.Thread] = None
         self._last_id = ""
         self._self_id = ""
+        self._guild_id = ""
+        self._owner_id = ""
+        self._admin_roles_cache = set()
+        self._admin_roles_at = 0.0
+        self._perm_cache = {}
         self.started = False
 
     # ------------------------------------------------------------------
@@ -149,7 +161,77 @@ class DiscordControl:
             return False
         if isinstance(body, list) and body:
             self._last_id = str(body[0].get("id") or "")
+
+        if self.allow_guild_admins:
+            self._load_guild()
         return True
+
+    # ------------------------------------------------------------------
+    # 서버 관리자 판정
+    # ------------------------------------------------------------------
+    def _load_guild(self) -> None:
+        """채널이 속한 서버와 소유자를 알아 둔다. 실패하면 서버 관리자 판정을 쓰지 않는다."""
+        status, body = util.http_json(
+            "%s/channels/%s" % (self.api, self.channel_id), headers=self._headers(), timeout=12
+        )
+        if 200 <= status < 300 and isinstance(body, dict):
+            self._guild_id = str(body.get("guild_id") or "")
+        if not self._guild_id:
+            util.debug("채널의 서버를 알 수 없어 서버 관리자 판정을 쓰지 않습니다.")
+            return
+        status, body = util.http_json(
+            "%s/guilds/%s" % (self.api, self._guild_id), headers=self._headers(), timeout=12
+        )
+        if 200 <= status < 300 and isinstance(body, dict):
+            self._owner_id = str(body.get("owner_id") or "")
+
+    def _admin_role_ids(self) -> set:
+        """관리자 권한이 붙은 역할 ID 모음. 조회에 실패하면 직전 값을 그대로 쓴다."""
+        now = time.time()
+        if self._admin_roles_at and now - self._admin_roles_at < ROLE_CACHE_TTL:
+            return self._admin_roles_cache
+        status, body = util.http_json(
+            "%s/guilds/%s/roles" % (self.api, self._guild_id), headers=self._headers(), timeout=12
+        )
+        if not (200 <= status < 300) or not isinstance(body, list):
+            return self._admin_roles_cache
+        found = set()
+        for role in body:
+            if not isinstance(role, dict):
+                continue
+            try:
+                bits = int(str(role.get("permissions") or "0"))
+            except ValueError:
+                bits = 0
+            if bits & ADMINISTRATOR:
+                found.add(str(role.get("id")))
+        self._admin_roles_cache = found
+        self._admin_roles_at = now
+        return found
+
+    def is_guild_admin(self, user_id: str) -> bool:
+        """디스코드 서버에서 관리자 권한을 가졌거나 서버 소유자인지."""
+        if not (self.allow_guild_admins and self._guild_id and user_id):
+            return False
+        now = time.time()
+        cached = self._perm_cache.get(user_id)
+        if cached and now < cached[0]:
+            return cached[1]
+
+        verdict = user_id == self._owner_id
+        if not verdict:
+            status, body = util.http_json(
+                "%s/guilds/%s/members/%s" % (self.api, self._guild_id, user_id),
+                headers=self._headers(),
+                timeout=12,
+            )
+            if 200 <= status < 300 and isinstance(body, dict):
+                admin_roles = self._admin_role_ids()
+                verdict = any(str(r) in admin_roles for r in (body.get("roles") or []))
+            elif status in (401, 403):
+                util.debug("멤버 권한을 조회할 수 없습니다 (status=%s)" % status)
+        self._perm_cache[user_id] = (now + PERM_CACHE_TTL, verdict)
+        return verdict
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -216,18 +298,22 @@ class DiscordControl:
             )
 
         if name in MUTATING and not self._allowed(author_id):
-            if not self.admins:
-                return (
-                    "`%s` 는 관리자만 쓸 수 있는데 관리자가 등록되어 있지 않습니다.\n"
-                    "설정의 `discord_admins` 에 사용자 ID 를 넣어 주세요. "
-                    "(당신의 ID: `%s`)" % (parts[0], author_id or "확인 불가")
-                )
-            return "`%s` 명령 권한이 없습니다. (당신의 ID: `%s`)" % (parts[0], author_id or "확인 불가")
+            how = "디스코드 서버 **관리자 권한**이 있거나 `discord_admins` 에 등록된 사람"
+            if not self.allow_guild_admins:
+                how = "`discord_admins` 에 등록된 사람"
+            return (
+                "`%s` 명령 권한이 없습니다.\n%s만 쓸 수 있습니다.\n(당신의 ID: `%s`)"
+                % (parts[0], how, author_id or "확인 불가")
+            )
 
         return self._run(name, args)
 
     def _allowed(self, author_id: str) -> bool:
-        return bool(author_id) and author_id in self.admins
+        if not author_id:
+            return False
+        if author_id in self.admins:
+            return True
+        return self.is_guild_admin(author_id)
 
     def _run(self, name: str, args: str) -> str:
         try:

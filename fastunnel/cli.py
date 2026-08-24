@@ -183,6 +183,8 @@ def build_run_config(args: argparse.Namespace):
         cli_overrides["notify"] = False
     if getattr(args, "discord_control", False):
         cli_overrides["discord_control"] = True
+    if getattr(args, "no_discord_guild_admins", False):
+        cli_overrides["discord_allow_guild_admins"] = False
     if args.no_restart:
         cli_overrides["restart"] = False
     return config_mod.load(cli_overrides, args.config)
@@ -680,6 +682,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="디스코드 봇으로 명령 받기 (봇 토큰 + 채널 ID 필요)",
     )
     run.add_argument("--discord-prefix", help="디스코드 명령 접두사 (기본: !ft)")
+    run.add_argument(
+        "--no-discord-guild-admins",
+        action="store_true",
+        help="디스코드 서버 관리자를 자동으로 허용하지 않음 (discord_admins 목록만 사용)",
+    )
     run.add_argument(
         "--discord-admin",
         action="append",

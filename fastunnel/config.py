@@ -39,6 +39,7 @@ DEFAULTS: Dict[str, Any] = {
     "discord_control": False,
     "discord_prefix": "!ft",         # 명령 접두사
     "discord_admins": [],            # 터널을 여닫을 수 있는 사용자 ID 목록
+    "discord_allow_guild_admins": True,   # 디스코드 서버 관리자면 자동으로 허용
     "discord_poll": 3,               # 채널 확인 간격(초)
     # ngrok 전용
     "ngrok_authtoken": "",
@@ -63,6 +64,7 @@ ENV_MAP = {
     "FASTUNNEL_DISCORD_CONTROL": "discord_control",
     "FASTUNNEL_DISCORD_PREFIX": "discord_prefix",
     "FASTUNNEL_DISCORD_ADMINS": "discord_admins",
+    "FASTUNNEL_DISCORD_GUILD_ADMINS": "discord_allow_guild_admins",
     "FASTUNNEL_MENTION": "mention",
     "NGROK_AUTHTOKEN": "ngrok_authtoken",
     "FASTUNNEL_NGROK_REGION": "ngrok_region",
@@ -75,6 +77,7 @@ BOOL_KEYS = {
     "notify",
     "notify_on_change",
     "discord_control",
+    "discord_allow_guild_admins",
 }
 
 SECRET_KEYS = {"discord_webhook", "discord_bot_token", "ngrok_authtoken"}
@@ -205,6 +208,7 @@ EXAMPLE_CONFIG = {
         "dns_wait": "주소가 공개 DNS에 등록될 때까지 기다리는 초. 0이면 기다리지 않습니다.",
         "discord_control": "디스코드 봇으로 명령을 받으려면 true. 봇 토큰과 채널 ID가 필요합니다.",
         "discord_admins": "터널을 여닫을 수 있는 디스코드 사용자 ID 목록. 예: [\"123456789\"]",
+        "discord_allow_guild_admins": "디스코드 서버 관리자에게 자동으로 권한을 줍니다. 끄려면 false.",
     },
     "provider": "cloudflared",
     "ports": "8000-8005,9000",
@@ -222,6 +226,7 @@ EXAMPLE_CONFIG = {
     "discord_control": False,
     "discord_prefix": "!ft",
     "discord_admins": [],
+    "discord_allow_guild_admins": True,
     "ngrok_authtoken": "",
 }
 

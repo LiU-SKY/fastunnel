@@ -22,6 +22,9 @@ from fastunnel.providers.cloudflared import CloudflaredTunnel  # noqa: E402
 
 CHANNEL = "999"
 BOT_ID = "bot-self"
+GUILD = "guild-1"
+OWNER = "owner-1"
+ADMIN_ROLE = "role-admin"
 
 
 class FakeDiscord:
@@ -33,6 +36,8 @@ class FakeDiscord:
         self.messages = []          # 채널에 쌓인 메시지 (오래된 것부터)
         self.sent = []              # 봇이 보낸 답장
         self.auth = []              # 받은 Authorization 헤더
+        self.members = {}           # user_id -> 역할 목록
+        self.member_lookups = []    # 권한 조회가 몇 번 갔는지 (캐시 확인용)
         self._next = 1000
         self._server = None
         self._thread = None
@@ -66,6 +71,23 @@ class FakeDiscord:
                     return self._json(401, {"message": "401: Unauthorized"})
                 if self.path.startswith("/users/@me"):
                     return self._json(200, {"id": BOT_ID, "username": "dictrio"})
+                # --- 서버 관리자 판정에 쓰는 엔드포인트들 ---
+                if self.path == "/channels/%s" % CHANNEL:
+                    return self._json(200, {"id": CHANNEL, "guild_id": GUILD})
+                if self.path == "/guilds/%s" % GUILD:
+                    return self._json(200, {"id": GUILD, "owner_id": OWNER})
+                if self.path == "/guilds/%s/roles" % GUILD:
+                    return self._json(200, [
+                        {"id": ADMIN_ROLE, "name": "관리자", "permissions": "8"},
+                        {"id": "role-plain", "name": "멤버", "permissions": "1024"},
+                    ])
+                if self.path.startswith("/guilds/%s/members/" % GUILD):
+                    uid = self.path.rsplit("/", 1)[1]
+                    outer.member_lookups.append(uid)
+                    roles = outer.members.get(uid)
+                    if roles is None:
+                        return self._json(404, {"message": "Unknown Member"})
+                    return self._json(200, {"user": {"id": uid}, "roles": roles})
                 if "/messages" in self.path:
                     after = ""
                     if "after=" in self.path:
@@ -218,6 +240,50 @@ def run() -> bool:
     r.check("토큰 없으면 사용 불가", "discord_bot_token" in no_token.available())
     no_channel = DiscordControl(config_mod.from_dict({"discord_bot_token": "t"}), FakeActions())
     r.check("채널 없으면 사용 불가", "discord_channel_id" in no_channel.available())
+
+    # ---------------- 디스코드 서버 관리자 판정 ----------------
+    with FakeDiscord(free_port(9740)) as fake3:
+        fake3.members = {
+            "boss": [ADMIN_ROLE],        # 관리자 역할 보유
+            "plain": ["role-plain"],     # 평범한 멤버
+            OWNER: [],                   # 서버 소유자 (역할이 없어도 관리자)
+        }
+        actions3 = FakeActions()
+        guild = _control(fake3, actions3)          # discord_admins 는 비워 둔다
+        r.check("서버 관리자 허용이 기본값", guild.allow_guild_admins is True)
+        r.check("시작 성공", guild.start() is True)
+        try:
+            r.check("서버 ID 확보", guild._guild_id == GUILD, guild._guild_id)
+            r.check("소유자 확보", guild._owner_id == OWNER, guild._owner_id)
+            r.check("관리자 역할 인식", guild._admin_role_ids() == {ADMIN_ROLE})
+
+            r.check("관리자 역할이면 허용", guild.is_guild_admin("boss") is True)
+            r.check("소유자면 허용", guild.is_guild_admin(OWNER) is True)
+            r.check("평범한 멤버는 거부", guild.is_guild_admin("plain") is False)
+            r.check("서버에 없는 사람은 거부", guild.is_guild_admin("nobody") is False)
+
+            before = len(fake3.member_lookups)
+            guild.is_guild_admin("boss")
+            r.check("판정 결과는 캐시된다", len(fake3.member_lookups) == before)
+
+            def gmsg(content, author):
+                return {"id": "1", "content": content, "author": {"id": author, "bot": False}}
+
+            r.check("관리자는 열기 명령 가능",
+                    guild.handle(gmsg("!ft 열기 8000-8005", "boss")) == "포트 8000-8005 로 다시 엽니다")
+            r.check("관리자는 재시작 가능", guild.handle(gmsg("!ft 재시작", "boss")) == "다시 엽니다")
+            deny = guild.handle(gmsg("!ft 열기 8000", "plain"))
+            r.check("일반 멤버는 거부", "권한이 없습니다" in deny, deny.replace(chr(10), " ")[:50])
+            r.check("거부 문구에 서버 관리자 안내", "서버" in deny)
+            r.check("조회는 누구나", guild.handle(gmsg("!ft 상태", "plain")) == "터널 1개 정상")
+        finally:
+            guild.stop()
+
+        # 끄면 목록만 본다
+        off = _control(fake3, FakeActions(), discord_allow_guild_admins=False,
+                       discord_admins=["someone"])
+        r.check("끄면 서버 관리자 무시", off.start() is True and off.is_guild_admin("boss") is False)
+        off.stop()
 
     # ---------------- 설정 도구 (tools/discord-setup.py) ----------------
     # 채널 ID 를 찾을 때 토큰 탐지 휴리스틱이 같이 돌아서 토큰을 채널 ID 로 집고

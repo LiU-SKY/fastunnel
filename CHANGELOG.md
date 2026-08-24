@@ -12,8 +12,10 @@
 - 설정 `discord_control` / `discord_prefix` / `discord_admins` / `discord_poll`,
   인자 `--discord-control` / `--discord-prefix` / `--discord-admin`,
   환경변수 `FASTUNNEL_DISCORD_CONTROL` / `_PREFIX` / `_ADMINS`
-- 터널을 여닫는 명령은 `discord_admins` 에 등록된 사용자만 쓸 수 있다.
-  비어 있으면 조회 명령만 동작한다(채널 멤버 아무나 포트를 열 수 있으면 안 되므로)
+- 터널을 여닫는 명령은 **디스코드 서버 관리자**(Administrator 권한 또는 서버 소유자)이거나
+  `discord_admins` 에 등록된 사용자만 쓸 수 있다. 서버 관리자는 따로 등록할 필요가 없다.
+  둘 다 아니면 조회 명령만 동작한다(채널 멤버 아무나 포트를 열 수 있으면 안 되므로).
+  자동 허용을 끄려면 `discord_allow_guild_admins: false` / `--no-discord-guild-admins`
 - 명령으로 주소가 바뀌면 채널에 새 주소를 알린다
 - `tools/discord-setup.py` — 이미 돌아가는 봇의 `.env` 에서 토큰을 찾아 검증하고
   채널 목록을 보여 준 뒤 `~/.fastunnel/config.json`(권한 600)을 만들어 준다.
