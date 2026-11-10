@@ -24,7 +24,10 @@
 
 일부러 하지 않은 것
 - **id 별 잠금.** 키가 256비트라 맞혀 볼 수 없다. 잠금은 이름만 아는 사람이 정상 사용자를
-  막는 수단이 될 뿐이다. 대신 실패한 연결은 잠깐 붙잡아 두고(FAIL_DELAY) 동시 핸드셰이크 수를 제한한다.
+  막는 수단이 될 뿐이다. 실패 지연(tarpit)도 같은 이유로 두지 않는다(자원만 묶는다).
+- **새 연결 거부.** 미인증 연결이 상한(MAX_PENDING)에 닿으면 가장 오래 기다린 것을 끊는다.
+  새 연결을 거부하면 말 없는 연결로 자리를 채워 정상 사용자를 막을 수 있기 때문이다. 다만 출발지 IP 가
+  없는 quick tunnel 에서는 연결을 대량으로 쏟아붓는 DoS 를 완전히 막을 수 없다(README 보안 절).
 - **암호화.** TLS 는 Cloudflare 에지에서 끝나므로 터널 안의 내용은 Cloudflare 가 볼 수 있다.
   표준 라이브러리만으로는 AES 도 인증서 생성도 없어서 1차 범위는 인증까지다(README 보안 절).
 
@@ -43,6 +46,7 @@ import secrets
 import socket
 import threading
 import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -55,9 +59,8 @@ KEY_LEN = 32
 OK = b"\x00"
 DENIED = b"\x01"
 
-HANDSHAKE_TIMEOUT = 5.0      # 이 안에 클라이언트가 다 말하지 않으면 끊는다
-FAIL_DELAY = 0.5             # 거부한 연결을 바로 놓지 않고 잠깐 붙잡는다(대량 시도 완화)
-MAX_PENDING = 32             # 동시에 진행 중인 핸드셰이크 상한(관문 하나당)
+HANDSHAKE_TIMEOUT = 3.0      # 이 안에 클라이언트가 다 말하지 않으면 끊는다(정상은 왕복 1번, 약 0.1초)
+MAX_PENDING = 128            # 동시에 진행 중인 핸드셰이크 상한(관문 하나당). 차면 가장 오래된 것을 끊는다
 WATCH_INTERVAL = 1.0         # 등록부 변경(회수)을 확인하는 간격(초)
 BUFFER = 65536
 
@@ -171,18 +174,39 @@ class Registry:
         self.load()
 
     # -- 읽기 ---------------------------------------------------------------
+    @property
+    def backup_path(self) -> str:
+        return self.path + ".bak"
+
+    @staticmethod
+    def _read(path: str) -> dict:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict) or not isinstance(data.get("clients"), dict):
+            raise ValueError("등록부 형식이 아닙니다")
+        return data
+
     def load(self) -> None:
-        data = {}
+        """등록부를 읽는다. 본 파일이 망가졌으면 백업(같은 내용으로 함께 쓴 것)으로 읽는다.
+
+        둘 다 망가졌으면 비어 있는 것으로 보고 **모두 거부**한다(fail-closed). 망가진 등록부로
+        아무나 통과시키는 일은 없어야 한다. 복구는 README 보안 절의 절차를 따른다.
+        """
+        data: dict = {}
         try:
-            with open(self.path, encoding="utf-8") as fh:
-                data = json.load(fh)
             self._mtime = os.path.getmtime(self.path)
-        except FileNotFoundError:
+        except OSError:
             self._mtime = None
-        except (OSError, ValueError) as exc:
-            # 망가진 등록부로 아무나 통과시키면 안 된다. 비어 있는 것으로 보고 모두 거부한다.
-            util.warn("접속 키 등록부를 읽지 못했습니다(모든 연결을 거부합니다): %s" % exc)
-            self._mtime = None
+        if self._mtime is not None:
+            try:
+                data = self._read(self.path)
+            except (OSError, ValueError) as exc:
+                try:
+                    data = self._read(self.backup_path)
+                    util.warn("접속 키 등록부가 손상돼 백업으로 읽었습니다(%s): %s" % (self.backup_path, exc))
+                except (OSError, ValueError):
+                    util.warn("접속 키 등록부와 백업을 읽지 못했습니다(모든 연결을 거부합니다): %s" % exc)
+                    data = {}
         clients = data.get("clients") if isinstance(data, dict) else None
         with self.lock:
             self.clients = {k: dict(v) for k, v in (clients or {}).items()
@@ -227,12 +251,15 @@ class Registry:
 
     # -- 쓰기 ---------------------------------------------------------------
     def _save(self) -> None:
+        """본 파일과 백업에 **같은 내용**을 원자적으로 쓴다.
+
+        같은 내용이라 백업으로 읽어도 회수한 키가 되살아나지 않는다. 본 파일을 먼저 쓰므로,
+        둘 사이에서 멈추면 본 파일은 새 내용·백업은 이전 내용이고 본 파일이 멀쩡하니 백업은 쓰이지 않는다.
+        """
         with self.lock:
             data = {"version": 1, "clients": self.clients}
-        util.write_json_file(self.path, data)
-        if not util.IS_WINDOWS:
-            # 키가 들어 있는 파일이다. 윈도우는 사용자 프로필 폴더의 ACL 이 대신 막는다.
-            os.chmod(self.path, 0o600)
+        write_secret_json(self.path, data)
+        write_secret_json(self.backup_path, data)
         self._mtime = os.path.getmtime(self.path)
 
     def add(self, client_id: str) -> bytes:
@@ -261,11 +288,27 @@ class Registry:
         return True
 
 
+def write_secret_json(path: str, data) -> None:
+    """키가 든 JSON 을 원자적으로 쓴다(임시 파일 + rename). 임시 파일부터 권한 600 으로 만든다.
+
+    나중에 chmod 하면 그 사이 잠깐 다른 사용자가 읽을 수 있는 틈이 생긴다.
+    윈도우는 모드 비트가 의미 없고 사용자 프로필 폴더의 ACL 이 대신 막는다.
+    """
+    util.ensure_dir(os.path.dirname(path) or ".")
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+        fh.flush()
+        os.fsync(fh.fileno())
+    if not util.IS_WINDOWS:
+        os.chmod(tmp, 0o600)   # 이미 있던 .tmp 를 다시 연 경우를 대비
+    os.replace(tmp, path)
+
+
 def write_client_key(path: str, client_id: str, key: bytes) -> None:
     """접속 도우미가 읽는 키 파일. 이 파일이 곧 출입증이므로 남에게 넘기면 안 된다."""
-    util.write_json_file(path, {"id": client_id, "key": encode_key(key)})
-    if not util.IS_WINDOWS:
-        os.chmod(path, 0o600)
+    write_secret_json(path, {"id": client_id, "key": encode_key(key)})
 
 
 def read_client_key(path: str) -> Tuple[str, bytes]:
@@ -335,7 +378,8 @@ class AuthGate:
         self.denied = 0
         self._server: Optional[socket.socket] = None
         self._stop = threading.Event()
-        self._pending = threading.BoundedSemaphore(MAX_PENDING)
+        # 인증 전 연결 → 받은 시각. 들어온 순서를 유지한다(가장 오래된 것부터 밀어낸다).
+        self._pending: "OrderedDict[socket.socket, float]" = OrderedDict()
         self._lock = threading.Lock()
         self._active: Dict[str, Set[socket.socket]] = {}
         self._threads: List[threading.Thread] = []
@@ -375,11 +419,20 @@ class AuthGate:
                 continue
             except OSError:
                 break
-            if not self._pending.acquire(blocking=False):
-                # 핸드셰이크가 몰리면 새 연결은 바로 닫는다. 이미 인증된 연결에는 영향이 없다.
-                _close(conn)
-                self._warn_throttled("핸드셰이크 대기열이 가득 차 연결을 닫았습니다.")
-                continue
+            # 미인증 연결이 상한에 닿으면 **새 연결이 아니라 가장 오래 기다린 연결**을 끊는다.
+            # 새 연결을 거부하면, 주소만 아는 사람이 말 없는 연결로 자리를 채워 정상 사용자의 접속을
+            # 계속 막을 수 있다(출발지 IP 가 없어 사람별 제한도 못 한다). 오래된 것을 밀어내면 정상
+            # 핸드셰이크(왕복 1번)는 그 사이에 끝나므로, 막으려면 그보다 빨리 연결을 쏟아부어야 한다.
+            evicted: List[socket.socket] = []
+            with self._lock:
+                while len(self._pending) >= MAX_PENDING:
+                    victim, _ = self._pending.popitem(last=False)
+                    evicted.append(victim)
+                self._pending[conn] = time.time()
+            for victim in evicted:
+                _close(victim)
+            if evicted:
+                self._warn_throttled("인증 전 연결이 몰려 가장 오래된 것부터 끊었습니다(공격일 수 있습니다).")
             threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
 
     def _watch_loop(self) -> None:
@@ -439,15 +492,16 @@ class AuthGate:
             except (AuthError, OSError):
                 client_id = None
             finally:
-                self._pending.release()
+                with self._lock:
+                    self._pending.pop(conn, None)
             if client_id is None:
+                # 거부는 바로 한다. 키가 256비트라 지연(tarpit)은 대입 방어에 실익이 없고 자원만 묶는다.
                 self.denied += 1
                 self._warn_throttled("인증에 실패한 연결이 있습니다(키 없음·회수됨·잘못된 키).")
                 try:
                     conn.sendall(DENIED)
                 except OSError:
                     pass
-                time.sleep(FAIL_DELAY)
                 return
             self.accepted += 1
             conn.settimeout(None)

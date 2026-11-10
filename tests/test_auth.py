@@ -90,7 +90,6 @@ def fresh_registry() -> auth.Registry:
 def run() -> bool:
     r = Results("auth - 접속 키 인증")
     util.set_verbosity(quiet=True)
-    auth.FAIL_DELAY = 0.05
     auth.WATCH_INTERVAL = 0.2
 
     # ---------------- 테스트 벡터 (docs/AUTH_PROTOCOL.md) ----------------
@@ -237,11 +236,53 @@ def run() -> bool:
     r.check("회수 기록이 남음", any(row[0] == "kim" and row[1] == "회수됨" for row in auth.Registry().rows()))
     r.check("두 번 revoke 는 False", auth.Registry().revoke("kim") is False)
 
-    # 등록부가 망가지면 모두 거부한다
+    # ---------------- 미인증 연결 홍수(DoS) ----------------
+    # 주소만 아는 사람이 말 없는 연결로 상한을 채워도, 정상 사용자의 핸드셰이크는 통과해야 한다.
+    old_max = auth.MAX_PENDING
+    auth.MAX_PENDING = 16
+    before = echo.connections
+    flood = []
+    for _ in range(80):
+        try:
+            flood.append(connect(gate))
+        except OSError:
+            break
+    time.sleep(0.2)
+    ok_during_flood = not denied("lee", key_lee)
+    r.check("말 없는 연결 %d개로 상한을 채워도 정상 사용자 접속" % len(flood), ok_during_flood)
+    # 정상 사용자 1개만 대상에 닿아야 한다(관문은 핸드셰이크 뒤 비동기로 대상에 붙으므로 잠깐 기다린다)
+    deadline = time.time() + 3
+    while echo.connections < before + 1 and time.time() < deadline:
+        time.sleep(0.05)
+    time.sleep(0.3)
+    r.check("홍수 연결은 대상에 닿지 않음(정상 1개만)", echo.connections == before + 1,
+            "대상 연결 %d개" % (echo.connections - before))
+    for s in flood:
+        s.close()
+    auth.MAX_PENDING = old_max
+
+    # ---------------- 등록부 손상과 복구 ----------------
+    r.check("백업 파일이 함께 쓰임", os.path.isfile(auth.Registry().backup_path))
+    if not util.IS_WINDOWS:
+        mode = os.stat(auth.Registry().backup_path).st_mode & 0o777
+        r.check("백업 권한 600", mode == 0o600, oct(mode))
+    # 쓰다 남은 임시 파일은 무시한다(원자적 쓰기: 본 파일은 이전 또는 새 내용 중 하나)
+    with open(auth.clients_path() + ".tmp", "w", encoding="utf-8") as fh:
+        fh.write("{ 쓰다 만 파일")
+    r.check("쓰다 남은 .tmp 는 무시", "lee" in auth.Registry().active_ids())
+    # 본 파일만 망가지면 백업으로 계속 동작한다(회수 기록 포함)
     with open(auth.clients_path(), "w", encoding="utf-8") as fh:
         fh.write("{ 망가진 파일")
     time.sleep(0.5)
-    r.check("망가진 등록부: 모두 거부", denied("lee", key_lee))
+    r.check("본 파일 손상: 백업으로 계속 접속", not denied("lee", key_lee))
+    r.check("본 파일 손상: 회수한 키는 백업에서도 거부", denied("kim", key_kim))
+    # 둘 다 망가지면 모두 거부한다(fail-closed)
+    with open(auth.Registry().backup_path, "w", encoding="utf-8") as fh:
+        fh.write("{ 이것도 망가짐")
+    with open(auth.clients_path(), "w", encoding="utf-8") as fh:
+        fh.write("{ 다시 망가짐")
+    time.sleep(0.5)
+    r.check("본 파일·백업 모두 손상: 모두 거부", denied("lee", key_lee))
 
     gate.stop()
     echo.close()
