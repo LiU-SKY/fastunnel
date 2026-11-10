@@ -70,6 +70,7 @@ fastunnel/
 ├── gateway.py      디스코드 게이트웨이 클라이언트 (인터랙션 수신)
 ├── ws.py           최소 WebSocket 클라이언트 (RFC 6455). 게이트웨이 전용
 ├── publish.py      현재 주소를 고정 URL(gist)에 게시. 클라이언트가 이걸 읽는다
+├── auth.py         접속 키 인증(--auth): 핸드셰이크·등록부(clients.json)·포트별 인증 관문
 ├── util.py         로깅·포트파싱·HTTP·다운로드·권한 등 공용 도구
 └── providers/
     ├── base.py         BaseProvider / Tunnel 공통 인터페이스
@@ -126,6 +127,18 @@ fastunnel/
 
 - 규칙은 `~/.fastunnel/state/firewall-<pid>.json` 에 기록 → 비정상 종료 후 `firewall cleanup` 으로 정리.
 - 권한이 없으면 **중단하지 말고** 수동 명령을 출력할 것. 이미 그렇게 되어 있습니다.
+
+### 접속 키 인증 (`--auth`)
+
+- **핸드셰이크 형식은 두 곳에 있습니다: `fastunnel/auth.py` 와 `client/relay.cs`.** 한쪽만 바꾸면 서로 붙지 않습니다.
+  `tests/test_relay.py` 가 둘을 실제로 붙여 봅니다(윈도우).
+- `relay.cs` 는 **윈도우 파워셸 5.1 의 `Add-Type`(C# 5)** 으로 컴파일됩니다. 문자열 보간(`$"..."`), `?.`,
+  식 본문 멤버(`=>`), 자동 속성 초기화 같은 C# 6+ 문법을 쓰면 받는 사람 PC 에서 컴파일이 실패합니다.
+- 관문은 cloudflared 와 실제 포트 사이에 있으므로 **cloudflared 의 `--url` 은 관문 포트**를 가리킵니다
+  (`provider.options["gates"]`). 재시작(`_spawn`)도 같은 대상을 씁니다.
+- 등록부가 망가지면 **모두 거부**합니다. 읽기 실패를 "빈 등록부 = 통과"로 바꾸지 마세요.
+- id 별 잠금을 넣지 마세요. 키가 256비트라 맞힐 수 없고, 잠금은 이름만 아는 사람이 정상 사용자를 막는 수단이 됩니다.
+- `client add` 는 `client/` 의 파일을 **바이트 그대로** 복사합니다. `.ps1` 의 BOM·CRLF 가 깨지면 안 되기 때문입니다.
 
 ### 터널 제공자
 

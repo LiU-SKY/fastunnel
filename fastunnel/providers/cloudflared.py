@@ -25,6 +25,9 @@ class CloudflaredTunnel(Tunnel):
     def client_hint(self) -> str:
         if self.proto in ("http", "https") or not self.public_url:
             return ""
+        if self.auth:
+            # 맨 cloudflared 로는 관문을 통과하지 못한다. 키가 든 접속 도우미가 필요하다.
+            return "접속 키가 있는 접속 도우미(client/connect.cmd)로만 연결됩니다"
         host = self.address()
         return "cloudflared access tcp --hostname %s --url localhost:%d" % (host, self.port)
 
@@ -62,6 +65,10 @@ class CloudflaredProvider(BaseProvider):
     def _args_for(self, port: int) -> List[str]:
         scheme = "tcp" if self.proto == "tcp" else self.proto
         target = "%s://%s:%d" % (scheme, self.local_host, port)
+        # 인증을 켜면 cloudflared 는 실제 포트가 아니라 그 포트를 지키는 관문을 가리킨다.
+        gate = (self.options.get("gates") or {}).get(port)
+        if gate:
+            target = "tcp://127.0.0.1:%d" % gate
         args = [
             self.binary,
             "tunnel",

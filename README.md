@@ -464,8 +464,36 @@ python3 tools/publish-setup.py --gist-id <GIST_ID> --owner <깃허브사용자�
 설정되어 있으면 터널이 열리거나 주소가 바뀌거나 종료될 때 자동으로 갱신합니다.
 
 > **배포 전에 [`client/README.md`](client/README.md) 의 보안 항목을 읽으세요.**
-> 배포물에 비밀값은 없지만, 받은 사람은 **열려 있는 포트 전부에 접속할 수 있습니다.**
-> 터널 자체에는 인증이 없습니다.
+> 인증을 켜지 않으면 받은 사람은 **열려 있는 포트 전부에 접속할 수 있습니다.**
+> cloudflared 와 주소만 있으면 클라이언트 없이도 붙습니다. 아래 접속 키 인증을 켜세요.
+
+### 접속 키 인증 (`--auth`)
+
+"주소를 아는 사람"이 아니라 **"키를 받은 사람"만** 포트에 닿게 합니다. 사람마다 키 하나, 언제든 회수.
+
+```bash
+# 1) 접속할 사람마다 키를 만든다 → 키가 든 접속 도우미 폴더가 생긴다
+python -m fastunnel client add kim          # ./fastunnel-client-kim/ (connect.cmd, client.key …)
+python -m fastunnel client list
+
+# 2) 인증을 켜고 터널을 연다 (TCP + cloudflared)
+python -m fastunnel run -p 4610,4611 --auth
+
+# 3) 그만두게 하려면 - 새 연결은 물론 열려 있던 연결도 바로 끊긴다
+python -m fastunnel client revoke kim
+```
+
+- 포트마다 **인증 관문**이 서고, cloudflared 는 실제 포트 대신 관문을 가리킵니다.
+  관문은 연결마다 키별 HMAC-SHA256 핸드셰이크(서로 확인, 재전송 불가)에 성공한 연결만 실제 포트로 잇습니다.
+  키는 선 위로 지나가지 않습니다.
+- 받는 사람은 폴더의 `connect.cmd` 를 그대로 실행합니다. 도우미가 `client.key` 로 핸드셰이크를 대신 합니다
+  (`relay.cs`, 윈도우 기본 파워셸이 컴파일 - 설치 불필요). 이때는 `localhost` 로 넣어도 됩니다.
+- 키 없이 `cloudflared access tcp` 로 붙으면 관문에서 막히고 실제 포트에는 바이트 하나 닿지 않습니다.
+- 등록부는 `~/.fastunnel/clients.json`(리눅스·맥은 권한 600). 실행 중에 revoke 해도 관문이 바로 반영합니다.
+- `--exact-ports`: 접속 도우미가 포트를 옆 번호로 비키지 않습니다. 주소에 포트가 들어가는 웹 앱
+  (예: `http://app.localhost:4611`)은 번호가 바뀌면 동작하지 않기 때문입니다.
+- **암호화는 하지 않습니다.** TLS 는 Cloudflare 에지에서 끝나므로 터널 안 내용은 Cloudflare 가 볼 수 있습니다.
+  표준 라이브러리만으로는 AES 도 인증서 생성도 없어서 인증까지만 합니다.
 
 ---
 
@@ -553,6 +581,8 @@ python -m fastunnel config path      # 탐색 경로 확인
     --timeout        주소 확보 대기 시간(초)   (기본 90)
     --dns-wait       공개 DNS 등록 대기(초)     (기본 45, 0이면 안 기다림)
     --no-restart     터널이 죽어도 재시작하지 않음
+    --auth           등록된 접속 키가 있는 클라이언트만 받기 (TCP·cloudflared)
+    --exact-ports    접속 도우미가 원격과 같은 포트 번호만 쓰게 함
     --duration       지정한 초 후 자동 종료
     --out            터널 정보 JSON 저장 경로
     --extra-args     터널 실행 파일에 추가 인자 전달
@@ -645,8 +675,8 @@ UTF-8 출력을 자동으로 켜지만, 오래된 콘솔에서는 `chcp 65001` �
 - **디스코드 명령으로 터널을 여닫는 권한**은 서버 관리자에게만 있습니다.
   더 좁히려면 `discord_allow_guild_admins: false` 로 두고 `discord_admins` 목록만 쓰세요.
 - **접속 클라이언트를 배포하면 받은 사람은 열려 있는 포트 전부에 접속할 수 있습니다.**
-  터널에는 인증이 없으므로 접근 제어는 서비스 쪽에서 하세요
-  ([`client/README.md`](client/README.md) 참고).
+  `--auth` 없이 연 터널에는 인증이 없습니다. cloudflared 와 주소만 있으면 누구나 붙습니다.
+  사람을 가려 받아야 하면 `--auth` 와 `fastunnel client add/revoke` 를 쓰세요(8절).
 
 ---
 
@@ -654,7 +684,7 @@ UTF-8 출력을 자동으로 켜지만, 오래된 콘솔에서는 `chcp 65001` �
 
 ```bash
 python tests/run_all.py                 # 전체 검증 (약 60초, 실제 터널을 엽니다)
-python tests/run_all.py --no-network    # 네트워크 없이 (약 8초, 167개)
+python tests/run_all.py --no-network    # 네트워크 없이 (약 12초, 224개. relay 는 윈도우에서만)
 python tests/run_all.py control slash   # 원하는 것만
 python -m compileall -q fastunnel       # 문법 검사
 ```

@@ -37,6 +37,7 @@ class TunnelSession:
         self.firewall: Optional[fw_mod.FirewallManager] = None
         self.notifier: Optional[Notifier] = None
         self.publisher = None
+        self.gates: List[Any] = []
         self.binary = ""
         self.version = ""
         self.started_at = 0.0
@@ -65,6 +66,19 @@ class TunnelSession:
         self.provider_name = str(self.cfg.get("provider", "cloudflared") or "").lower()
         if self.provider_name not in ("cloudflared", "ngrok"):
             raise SessionError("제공자는 cloudflared 또는 ngrok 이어야 합니다.")
+
+        # 인증 관문은 바이트를 그대로 나르는 TCP 에서만 끼울 수 있다. HTTP 는 브라우저가 바로 붙는다.
+        if self.cfg.bool("auth"):
+            if self.proto != "tcp":
+                raise SessionError(
+                    "접속 키 인증(--auth)은 TCP 터널에서만 쓸 수 있습니다.",
+                    "--proto tcp 로 실행하세요. 접속하는 쪽은 접속 도우미(client/)를 씁니다.",
+                )
+            if self.provider_name != "cloudflared":
+                raise SessionError(
+                    "접속 키 인증(--auth)은 지금 cloudflared 에서만 지원합니다.",
+                    "--provider cloudflared 로 실행하세요.",
+                )
 
     # ------------------------------------------------------------------
     # 2) 실행 파일 + 제공자 준비
@@ -155,6 +169,9 @@ class TunnelSession:
         except Exception as exc:  # noqa: BLE001  - 방화벽 실패로 터널까지 막지는 않는다
             util.warn("방화벽 설정 중 오류(무시하고 계속): %s" % exc)
 
+        if self.cfg.bool("auth"):
+            self._start_gates()
+
         try:
             self.provider.start()
         except ProviderError as exc:
@@ -168,6 +185,47 @@ class TunnelSession:
             )
         self._started = True
         self.started_at = time.time()
+
+    def _start_gates(self) -> None:
+        """포트마다 인증 관문을 세우고, cloudflared 가 관문을 가리키게 한다(auth.py).
+
+        관문이 하나라도 서지 않으면 터널을 열지 않는다. 인증 없이 열리는 것보다 안 열리는 편이 낫다.
+        """
+        from .auth import AuthError, AuthGate, Registry
+
+        assert self.provider is not None
+        try:
+            registry = Registry()
+        except AuthError as exc:
+            raise SessionError(str(exc))
+        if not registry.active_ids():
+            self._rollback_firewall()
+            raise SessionError(
+                "등록된 접속 키가 없습니다. 이대로 열면 아무도 접속할 수 없습니다.",
+                "fastunnel client add <이름> 으로 접속할 사람마다 키를 만드세요.",
+            )
+        gates: Dict[int, int] = {}
+        try:
+            for port in self.ports:
+                gate = AuthGate(registry, str(self.cfg.get("host", "localhost")), port)
+                gates[port] = gate.start()
+                self.gates.append(gate)
+        except OSError as exc:
+            self._stop_gates()
+            self._rollback_firewall()
+            raise SessionError("인증 관문을 열지 못했습니다: %s" % exc)
+        self.provider.options["gates"] = gates
+        for tunnel in self.provider.tunnels:
+            tunnel.auth = True
+        util.info("접속 키 인증 사용 (등록된 키 %d개)" % len(registry.active_ids()))
+
+    def _stop_gates(self) -> None:
+        for gate in self.gates:
+            try:
+                gate.stop()
+            except Exception as exc:  # noqa: BLE001 - 정리 중 하나가 실패해도 나머지는 닫는다
+                util.debug("인증 관문 종료 오류: %s" % exc)
+        self.gates = []
 
     def _rollback_firewall(self) -> None:
         if self.firewall is not None:
@@ -304,7 +362,10 @@ class TunnelSession:
         if self.publisher is None:
             return False
         try:
-            payload = address_payload(self.tunnels, self.provider_name, note)
+            payload = address_payload(
+                self.tunnels, self.provider_name, note,
+                exact_ports=self.cfg.bool("client_exact_ports"),
+            )
             return self.publisher.publish(payload)
         except Exception as exc:  # noqa: BLE001 - 게시 실패가 터널을 막아선 안 된다
             util.debug("주소 게시 오류: %s" % exc)
@@ -336,6 +397,7 @@ class TunnelSession:
                 self.provider.stop()
             except Exception as exc:  # noqa: BLE001
                 util.debug("터널 종료 중 오류: %s" % exc)
+        self._stop_gates()
         self._rollback_firewall()
         if notify and self._started:
             self.notify_stopped()

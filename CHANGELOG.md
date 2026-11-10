@@ -2,6 +2,28 @@
 
 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/) 를 따릅니다.
 
+## [1.6.0] - 2026-11-10
+
+### 추가
+
+- **접속 키 인증 (`run --auth`).** 키를 받은 사람만 포트에 닿게 한다.
+  - 포트마다 인증 관문(`fastunnel/auth.py`)이 서고 cloudflared 는 관문을 가리킨다.
+    관문은 연결마다 키별 HMAC-SHA256 핸드셰이크(상호 확인, 재전송 불가)에 성공한 연결만 실제 포트로 잇는다.
+  - `fastunnel client add/list/revoke`: 사람마다 키 하나. `add` 는 키가 든 접속 도우미 폴더를 만든다.
+    `revoke` 는 실행 중인 관문이 바로 반영해 열린 연결까지 끊는다.
+  - 접속 도우미가 `client.key` 로 핸드셰이크를 한다(`client/relay.cs`, 윈도우 파워셸 5.1 이 컴파일).
+    중계기는 127.0.0.1 과 ::1 둘 다에서 받으므로 인증 모드에서는 `localhost` 도 된다.
+  - 인증은 TCP + cloudflared 에서만 켤 수 있다. 등록된 키가 없으면 터널을 열지 않는다.
+  - 일부러 하지 않은 것: id 별 잠금(키가 256비트라 맞힐 수 없고, 잠금은 이름만 아는 사람의 방해 수단이 된다),
+    터널 안 암호화(표준 라이브러리에 AES·인증서 생성이 없다. TLS 는 Cloudflare 에지에서 끝난다).
+- **`run --exact-ports` / `client_exact_ports`.** 게시 내용에 `exact_ports` 를 넣어, 접속 도우미가 포트를
+  옆 번호로 비키지 않게 한다. 주소에 포트가 들어가는 웹 앱용.
+- 게시 내용(gist)에 `auth` 를 넣는다. 키는 들어가지 않는다.
+- 테스트: `test_auth`(관문·등록부·회수·재전송·CLI), `test_relay`(윈도우: relay.cs 컴파일과 파이썬 관문 상호 운용).
+  실제 quick tunnel 경유로도 확인했다: 키 있는 도우미 HTTP 200, 맨 cloudflared 거부, 회수 후 거부.
+
+---
+
 ## [1.5.1] - 2026-08-25
 
 ### 수정

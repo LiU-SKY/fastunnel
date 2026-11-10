@@ -14,7 +14,8 @@ from . import firewall as fw_mod, util
 from .notify import Notifier
 from .runner import SessionError, TunnelSession
 
-SUBCOMMANDS = ("run", "gui", "install", "update", "doctor", "firewall", "notify", "config", "logs")
+SUBCOMMANDS = ("run", "gui", "install", "update", "doctor", "firewall", "notify", "config", "logs",
+               "client")
 
 def banner() -> str:
     title = "fastunnel v%s" % __version__
@@ -189,6 +190,10 @@ def build_run_config(args: argparse.Namespace):
         cli_overrides["discord_slash"] = False
     if args.no_restart:
         cli_overrides["restart"] = False
+    if getattr(args, "auth", False):
+        cli_overrides["auth"] = True
+    if getattr(args, "exact_ports", False):
+        cli_overrides["client_exact_ports"] = True
     return config_mod.load(cli_overrides, args.config)
 
 
@@ -630,6 +635,69 @@ def cmd_logs(args: argparse.Namespace) -> int:  # noqa: ARG001
     return 0
 
 
+# 접속 도우미 폴더에 함께 넣는 파일. client.key 는 사람마다 따로 만든다.
+CLIENT_BUNDLE = ("connect.cmd", "connect.ps1", "relay.cs", "server.txt", "README.md")
+
+
+def _client_source_dir() -> str:
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "client")
+
+
+def cmd_client(args: argparse.Namespace) -> int:
+    """접속 키를 만들고(add), 보고(list), 회수한다(revoke). 실행 중인 관문은 파일 변경을 바로 반영한다."""
+    from . import auth as auth_mod
+
+    registry = auth_mod.Registry()
+    if args.action == "list":
+        rows = [[cid, state, when] for cid, state, when in registry.rows()]
+        if not rows:
+            util.info("등록된 접속 키가 없습니다. %s" % util.dim("(fastunnel client add <이름>)"))
+            return 0
+        print(util.render_table(["이름", "상태", "시각"], rows))
+        print(util.dim("  등록부: %s" % registry.path))
+        return 0
+
+    if not args.name:
+        util.error("이름을 지정하세요. 예: fastunnel client %s kim" % args.action)
+        return 2
+
+    if args.action == "revoke":
+        if registry.revoke(args.name):
+            util.ok("'%s' 의 접속 키를 회수했습니다. 실행 중인 터널은 곧 그 연결을 끊습니다." % args.name)
+            return 0
+        util.error("'%s' 는 등록돼 있지 않거나 이미 회수됐습니다." % args.name)
+        return 1
+
+    # add ---------------------------------------------------------------
+    try:
+        key = registry.add(args.name)
+    except auth_mod.AuthError as exc:
+        util.error(str(exc))
+        return 1
+    out = os.path.abspath(args.out or os.path.join(os.getcwd(), "fastunnel-client-%s" % args.name))
+    util.ensure_dir(out)
+    source = _client_source_dir()
+    copied = []
+    for name in CLIENT_BUNDLE:
+        src = os.path.join(source, name)
+        if os.path.isfile(src):
+            # 줄바꿈·BOM 을 그대로 지키려고 바이트로 복사한다(.ps1 은 BOM 이 없으면 깨진다).
+            with open(src, "rb") as fin, open(os.path.join(out, name), "wb") as fout:
+                fout.write(fin.read())
+            copied.append(name)
+    auth_mod.write_client_key(os.path.join(out, auth_mod.KEY_FILENAME), args.name, key)
+    util.ok("'%s' 의 접속 키를 만들었습니다." % args.name)
+    print(util.dim("  폴더: %s" % out))
+    if len(copied) < len(CLIENT_BUNDLE):
+        missing = [n for n in CLIENT_BUNDLE if n not in copied]
+        util.warn("접속 도우미 파일 일부를 찾지 못했습니다(%s). client/ 폴더에서 직접 넣어 주세요."
+                  % ", ".join(missing))
+    util.info("server.txt 에 게시 URL 이 들어 있는지 확인한 뒤, 이 폴더를 %s 에게만 전달하세요."
+              % args.name)
+    util.warn("client.key 가 곧 출입증입니다. 공개 저장소·단체 채팅방에 올리지 마세요.")
+    return 0
+
+
 # ----------------------------------------------------------------------
 # 파서
 # ----------------------------------------------------------------------
@@ -725,6 +793,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--no-restart", action="store_true", help="터널이 죽어도 재시작하지 않음")
     run.add_argument(
+        "--auth",
+        action="store_true",
+        help="등록된 접속 키가 있는 클라이언트만 받기 (TCP·cloudflared, fastunnel client add 참고)",
+    )
+    run.add_argument(
+        "--exact-ports",
+        action="store_true",
+        help="접속 도우미가 원격과 같은 포트 번호만 쓰게 함 (주소에 포트가 들어가는 웹 앱용)",
+    )
+    run.add_argument(
         "--duration", type=float, help="지정한 초가 지나면 자동 종료 (0이면 무제한)"
     )
     run.add_argument("--out", help="터널 정보를 저장할 JSON 경로")
@@ -780,6 +858,15 @@ def build_parser() -> argparse.ArgumentParser:
     logs = sub.add_parser("logs", help="최근 터널 로그 보기")
     logs.add_argument("-n", "--lines", type=int, default=50, help="출력할 줄 수")
     logs.set_defaults(func=cmd_logs)
+
+    # client ------------------------------------------------------------
+    client = sub.add_parser("client", help="접속 키 관리 (run --auth 와 함께 씀)")
+    client.add_argument("action", choices=["add", "list", "revoke"])
+    client.add_argument("name", nargs="?", help="접속할 사람 이름 (영문 소문자·숫자·-·_)")
+    client.add_argument(
+        "--out", help="add: 접속 도우미 폴더를 만들 곳 (기본: ./fastunnel-client-<이름>)"
+    )
+    client.set_defaults(func=cmd_client)
 
     return parser
 

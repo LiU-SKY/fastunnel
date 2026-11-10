@@ -12,6 +12,13 @@
 
   주의: 통로는 IPv4(127.0.0.1)에만 열린다. 'localhost' 는 윈도우에서 IPv6(::1)로
   먼저 풀리기 때문에 접속이 실패할 수 있다. 그래서 항상 127.0.0.1 을 안내한다.
+
+  접속 키 인증 (서버가 run --auth 로 실행 중일 때)
+    - 이 폴더의 client.key 로 서버의 인증 관문과 핸드셰이크를 한다(relay.cs).
+    - cloudflared access 는 내부 포트에 띄우고, 내 PC 의 포트에서는 중계기가 받는다.
+      중계기는 127.0.0.1 과 ::1 둘 다에서 받으므로 이때는 'localhost' 로 넣어도 된다.
+    - 서버가 exact_ports 를 게시하면(또는 -ExactPorts) 포트를 옆 번호로 비키지 않는다.
+      주소에 포트가 박힌 웹 앱은 번호가 바뀌면 동작하지 않기 때문이다.
 #>
 [CmdletBinding()]
 param(
@@ -22,7 +29,11 @@ param(
     # 내 PC에서 쓸 첫 포트를 강제 지정
     [int]$LocalPort = 0,
     # 연결만 하고 바로 종료 (테스트용)
-    [switch]$NoWait
+    [switch]$NoWait,
+    # 원격과 같은 포트만 쓴다(이미 쓰는 중이면 비키지 않고 멈춘다)
+    [switch]$ExactPorts,
+    # 접속 키 파일 (기본: 이 폴더의 client.key)
+    [string]$KeyFile = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -96,13 +107,16 @@ function Get-Tunnels {
                 RemotePort = [int]$t.port
                 Proto      = if ($t.proto) { [string]$t.proto } else { "tcp" }
                 Host       = Clean-Host ([string]$t.address)
+                Auth       = [bool]$t.auth
             }
         }
+        $script:ServerExactPorts = [bool]$data.exact_ports
     } elseif ($data.host -or $data.address) {
         $list += [pscustomobject]@{
             RemotePort = if ($data.port) { [int]$data.port } else { 0 }
             Proto      = "tcp"
             Host       = Clean-Host ([string]($data.host, $data.address -ne $null)[0])
+            Auth       = [bool]$data.auth
         }
     }
 
@@ -115,6 +129,37 @@ function Get-Tunnels {
     $data | ConvertTo-Json -Depth 6 | Set-Content $CachePath -Encoding UTF8
     # 앞의 콤마가 없으면 원소가 하나일 때 배열이 풀려 .Count 가 사라진다
     return ,$list
+}
+
+# ------------------------------------------------------------- 접속 키
+function Get-ClientKey {
+    $path = if ($KeyFile) { $KeyFile } else { Join-Path $Root "client.key" }
+    if (-not (Test-Path $path)) {
+        throw "이 서버는 접속 키가 필요합니다. 받은 폴더에 client.key 가 있는지 확인하세요."
+    }
+    try {
+        $k = Get-Content $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $bytes = [Convert]::FromBase64String([string]$k.key)
+    } catch {
+        throw "client.key 를 읽지 못했습니다: $($_.Exception.Message)"
+    }
+    if (-not $k.id -or $bytes.Length -ne 32) { throw "client.key 형식이 올바르지 않습니다." }
+    return [pscustomobject]@{ Id = [string]$k.id; Key = $bytes }
+}
+
+function Load-Relay {
+    if ("FtRelay" -as [type]) { return }
+    $src = Join-Path $Root "relay.cs"
+    if (-not (Test-Path $src)) { throw "relay.cs 가 없습니다. 받은 폴더를 통째로 다시 풀어 주세요." }
+    Add-Type -TypeDefinition (Get-Content $src -Raw -Encoding UTF8) -Language CSharp
+}
+
+# 중계기가 핸드셰이크만 해 본 결과를 표의 상태로 바꾼다.
+function Relay-State([string]$probe) {
+    if ($probe -eq "ok")        { return "정상" }
+    if ($probe -eq "denied")    { return "키 거부" }
+    if ($probe -eq "badserver") { return "서버 확인 실패" }
+    return "응답 없음"
 }
 
 # ------------------------------------------------------------- cloudflared
@@ -187,6 +232,8 @@ function Test-Alive([int]$port) {
 
 # ------------------------------------------------------------------- 실행
 $procs = @()
+$relays = @()
+$script:ServerExactPorts = $false
 try {
     Say ""
     Say "  터널 접속 도우미" "Cyan"
@@ -199,29 +246,60 @@ try {
     }
     Ok "열려 있는 터널 $($tunnels.Count)개"
 
+    $exact = $ExactPorts -or $script:ServerExactPorts
+    $needAuth = @($tunnels | Where-Object { $_.Auth }).Count -gt 0
+    $cred = $null
+    if ($needAuth) {
+        $cred = Get-ClientKey
+        Load-Relay
+        Ok "접속 키 확인 ($($cred.Id))"
+    }
+
     $cf = Ensure-Cloudflared
     $used = Get-UsedPorts
     $rows = @()
+    # 인증 터널의 cloudflared 는 사람이 쓰지 않는 내부 포트에 띄운다(중계기만 그 포트에 붙는다).
+    $inner = 41000
 
     foreach ($t in $tunnels) {
-        # 되도록 원격과 같은 번호를 쓴다. 이미 쓰는 중이면 옆 번호로 비킨다.
+        # 되도록 원격과 같은 번호를 쓴다. 이미 쓰는 중이면 옆 번호로 비킨다(고정 모드면 멈춘다).
         $want = if ($LocalPort -gt 0 -and $rows.Count -eq 0) { $LocalPort } else { $t.RemotePort }
         if ($want -le 0) { $want = 20000 }
         $local = $want
+        if ($exact -and $used.ContainsKey($local)) {
+            throw "내 PC 의 포트 $local 을 다른 프로그램이 쓰고 있습니다. 그 프로그램을 끄고 다시 실행하세요. (이 서버는 같은 번호로만 접속할 수 있습니다)"
+        }
         while ($used.ContainsKey($local)) { $local++ }
         $used[$local] = $true
 
         Info "포트 $($t.RemotePort) 연결하는 중 ..."
+        $cfPort = $local
+        if ($t.Auth) {
+            while ($used.ContainsKey($inner)) { $inner++ }
+            $cfPort = $inner
+            $used[$inner] = $true
+        }
         $p = Start-Process -FilePath $cf -PassThru -WindowStyle Hidden -ArgumentList @(
-            "access", "tcp", "--hostname", $t.Host, "--url", "127.0.0.1:$local"
+            "access", "tcp", "--hostname", $t.Host, "--url", "127.0.0.1:$cfPort"
         )
         $procs += $p
-        $ready = Wait-Port $local 40
-        $alive = if ($ready) { Test-Alive $local } else { $false }
+        $ready = Wait-Port $cfPort 40
+        if ($t.Auth) {
+            $state = "실패"
+            if ($ready) {
+                $relay = [FtRelay]::new($local, "127.0.0.1", $cfPort, $t.RemotePort, $cred.Id, $cred.Key)
+                $relay.Start()
+                $relays += $relay
+                $state = Relay-State ($relay.Probe(20000))
+            }
+        } else {
+            $alive = if ($ready) { Test-Alive $local } else { $false }
+            $state = if (-not $ready) { "실패" } elseif ($alive) { "정상" } else { "응답 없음" }
+        }
         $rows += [pscustomobject]@{
             "원격 포트" = $t.RemotePort
             "접속 주소" = "127.0.0.1:$local"
-            "상태"      = if (-not $ready) { "실패" } elseif ($alive) { "정상" } else { "응답 없음" }
+            "상태"      = $state
         }
     }
 
@@ -233,6 +311,8 @@ try {
     $good = @($rows | Where-Object { $_."상태" -eq "정상" }).Count
     if ($good -eq $rows.Count) {
         Ok "모두 연결됐습니다. 위 '접속 주소' 를 그대로 넣어 주세요."
+    } elseif (@($rows | Where-Object { $_."상태" -eq "키 거부" }).Count -gt 0) {
+        Err "서버가 이 접속 키를 거부했습니다. 키가 회수됐거나 다른 서버의 키입니다. 보내 준 사람에게 문의하세요."
     } elseif ($good -gt 0) {
         Warn "일부만 연결됐습니다. '응답 없음' 은 저쪽 프로그램이 아직 안 켜졌을 수 있습니다."
     } else {
@@ -241,8 +321,12 @@ try {
     }
 
     Say ""
-    Info "'localhost' 가 아니라 반드시 127.0.0.1 로 넣으세요."
-    Info "  localhost 는 IPv6 로 먼저 시도해서 실패할 수 있습니다."
+    if ($needAuth) {
+        Info "'127.0.0.1' 과 'localhost' 둘 다 됩니다."
+    } else {
+        Info "'localhost' 가 아니라 반드시 127.0.0.1 로 넣으세요."
+        Info "  localhost 는 IPv6 로 먼저 시도해서 실패할 수 있습니다."
+    }
     Warn "이 창을 닫으면 접속이 끊깁니다. 쓰는 동안 켜 두세요."
     Warn "접속하려는 프로그램은 이 창을 띄운 것과 같은 PC 에서 실행해야 합니다."
     Say ""
@@ -262,6 +346,9 @@ try {
     if (-not $NoWait) { Read-Host "  엔터를 누르면 닫힙니다" }
     exit 1
 } finally {
+    foreach ($r in $relays) {
+        try { $r.Stop() } catch {}
+    }
     foreach ($p in $procs) {
         if ($p -and -not $p.HasExited) {
             try { $p.Kill() } catch {}

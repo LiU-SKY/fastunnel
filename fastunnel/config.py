@@ -19,6 +19,8 @@ DEFAULTS: Dict[str, Any] = {
     "dns_wait": 45,                  # 주소가 공개 DNS 에 등록될 때까지 대기(초). 0이면 끔
     "restart": True,                 # 터널 프로세스가 죽으면 재시작
     "max_restarts": 5,
+    "auth": False,                   # 등록된 접속 키가 있는 클라이언트만 받기 (TCP + cloudflared)
+    "client_exact_ports": False,     # 접속 도우미가 원격과 같은 포트만 쓰게 함(비키지 않음)
     # 바이너리
     "update": "auto",                # auto | skip | force | ask
     "bin_path": "",                  # 직접 지정한 실행 파일 경로
@@ -60,6 +62,7 @@ ENV_MAP = {
     "FASTUNNEL_UPDATE": "update",
     "FASTUNNEL_BIN": "bin_path",
     "FASTUNNEL_DNS_WAIT": "dns_wait",
+    "FASTUNNEL_AUTH": "auth",
     "FASTUNNEL_DISCORD_WEBHOOK": "discord_webhook",
     "DISCORD_WEBHOOK_URL": "discord_webhook",
     "FASTUNNEL_DISCORD_BOT_TOKEN": "discord_bot_token",
@@ -79,6 +82,8 @@ ENV_MAP = {
 
 BOOL_KEYS = {
     "restart",
+    "auth",
+    "client_exact_ports",
     "firewall",
     "firewall_persist",
     "notify",

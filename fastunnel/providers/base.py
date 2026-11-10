@@ -36,6 +36,8 @@ class Tunnel:
         self.restarts = 0
         self.started_at = time.time()
         self.ready_at: Optional[float] = None
+        # 인증 관문(auth.py)을 거치는 터널인지. 접속 안내와 게시 내용이 달라진다.
+        self.auth = False
 
     # 표시용 --------------------------------------------------------
     def label(self) -> str:
@@ -87,6 +89,7 @@ class Tunnel:
             "client_hint": self.client_hint(),
             "restarts": self.restarts,
             "error": self.error,
+            "auth": self.auth,
         }
 
     def set_url(self, url: str) -> bool:
