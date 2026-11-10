@@ -286,8 +286,17 @@ def read_client_key(path: str) -> Tuple[str, bytes]:
 
 
 def _close(sock: Optional[socket.socket]) -> None:
+    """소켓을 닫는다. 다른 스레드가 이 소켓에서 recv 로 기다리고 있어도 깨운다.
+
+    리눅스는 close() 만으로는 다른 스레드의 recv() 를 깨우지 않는다(윈도우는 깨운다).
+    그래서 shutdown() 을 먼저 해야 회수한 연결이 실제로 끊긴다(리눅스 실측에서 발견).
+    """
     if sock is None:
         return
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
     try:
         sock.close()
     except OSError:
