@@ -130,8 +130,9 @@ fastunnel/
 
 ### 접속 키 인증 (`--auth`)
 
-- **핸드셰이크 형식은 두 곳에 있습니다: `fastunnel/auth.py` 와 `client/relay.cs`.** 한쪽만 바꾸면 서로 붙지 않습니다.
-  `tests/test_relay.py` 가 둘을 실제로 붙여 봅니다(윈도우).
+- **핸드셰이크 형식은 `docs/AUTH_PROTOCOL.md` 가 기준이고, 구현은 `fastunnel/auth.py` 와 `client/relay.cs` 두 곳입니다.**
+  한쪽만 바꾸면 서로 붙지 않습니다. 둘 다 `tests/auth_vectors.json` 을 통과해야 하고,
+  `tests/test_relay.py` 가 둘을 실제로 붙여 봅니다(윈도우). 형식을 바꾸면 벡터와 명세도 함께 바꾸세요.
 - `relay.cs` 는 **윈도우 파워셸 5.1 의 `Add-Type`(C# 5)** 으로 컴파일됩니다. 문자열 보간(`$"..."`), `?.`,
   식 본문 멤버(`=>`), 자동 속성 초기화 같은 C# 6+ 문법을 쓰면 받는 사람 PC 에서 컴파일이 실패합니다.
 - 관문은 cloudflared 와 실제 포트 사이에 있으므로 **cloudflared 의 `--url` 은 관문 포트**를 가리킵니다

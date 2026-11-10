@@ -93,6 +93,27 @@ def run() -> bool:
     auth.FAIL_DELAY = 0.05
     auth.WATCH_INTERVAL = 0.2
 
+    # ---------------- 테스트 벡터 (docs/AUTH_PROTOCOL.md) ----------------
+    # 명세 공식을 auth 모듈과 따로 계산해 대조한다. 다른 구현(relay.cs, Rust)도 같은 파일을 쓴다.
+    import hashlib
+    import hmac as hmac_mod
+
+    vectors = json.load(open(os.path.join(os.path.dirname(__file__), "auth_vectors.json"), encoding="utf-8"))
+    for v in vectors["vectors"]:
+        key = auth.decode_key(v["key_b64"])
+        sn, cn = bytes.fromhex(v["server_nonce_hex"]), bytes.fromhex(v["client_nonce_hex"])
+        cid, port = v["client_id"], v["port"]
+
+        def spec(side):
+            material = b"FTA1|" + side + b"|" + str(port).encode() + b"|" + sn + cn + cid.encode()
+            return hmac_mod.new(key, material, hashlib.sha256).hexdigest()
+
+        r.check("벡터 %s: 명세 공식 = 벡터" % cid,
+                spec(b"c") == v["client_mac_hex"] and spec(b"s") == v["server_mac_hex"])
+        r.check("벡터 %s: auth 모듈 = 벡터" % cid,
+                auth.client_mac(key, port, sn, cn, cid).hex() == v["client_mac_hex"]
+                and auth.server_mac(key, port, sn, cn, cid).hex() == v["server_mac_hex"])
+
     # ---------------- 등록부 ----------------
     reg = fresh_registry()
     key_kim = reg.add("kim")

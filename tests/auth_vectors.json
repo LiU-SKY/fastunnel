@@ -1,0 +1,35 @@
+{
+  "protocol": "FTA1",
+  "vectors": [
+    {
+      "client_id": "kim",
+      "port": 4611,
+      "key_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "server_nonce_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "client_nonce_hex": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+      "client_mac_hex": "b2a697ac2e3eb964ba8d87ae5f65591c18fdd94dfcc943d9701fcadfa9ecdef3",
+      "server_mac_hex": "a5a7ef8c550c1388e29664aa12280a68340704ea754470d1371fd52f882e7f9d",
+      "client_message_hex": "036b696d404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5fb2a697ac2e3eb964ba8d87ae5f65591c18fdd94dfcc943d9701fcadfa9ecdef3"
+    },
+    {
+      "client_id": "lab-01",
+      "port": 25565,
+      "key_b64": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo=",
+      "server_nonce_hex": "5555555555555555555555555555555555555555555555555555555555555555",
+      "client_nonce_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "client_mac_hex": "2bb16bddf833176ff00a276a54b70468515507c506975a4c6487bd2fdf76b65b",
+      "server_mac_hex": "6142279b0486c86868603c020af4154c54f5f31e3a62412b76930de379d0f203",
+      "client_message_hex": "066c61622d303100000000000000000000000000000000000000000000000000000000000000002bb16bddf833176ff00a276a54b70468515507c506975a4c6487bd2fdf76b65b"
+    },
+    {
+      "client_id": "x",
+      "port": 1,
+      "key_b64": "//////////////////////////////////////////8=",
+      "server_nonce_hex": "fffefdfcfbfaf9f8f7f6f5f4f3f2f1f0efeeedecebeae9e8e7e6e5e4e3e2e1e0",
+      "client_nonce_hex": "00020406080a0c0e10121416181a1c1e20222426282a2c2e30323436383a3c3e",
+      "client_mac_hex": "41f6cdb1d68e5c9fe63632f0535603c90a536fce67efc23346f4fde8342630f5",
+      "server_mac_hex": "bdbdc4d570a05f32fbd95f226852ab811924ca46f01f3e14acbf7c9fab89ef1c",
+      "client_message_hex": "017800020406080a0c0e10121416181a1c1e20222426282a2c2e30323436383a3c3e41f6cdb1d68e5c9fe63632f0535603c90a536fce67efc23346f4fde8342630f5"
+    }
+  ]
+}
