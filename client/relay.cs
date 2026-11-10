@@ -213,6 +213,12 @@ public class FtRelay
 
     byte[] Mac(string side, byte[] serverNonce, byte[] clientNonce, byte[] ident)
     {
+        return ComputeMac(key, side, remotePort, serverNonce, clientNonce, ident);
+    }
+
+    // 테스트 벡터(tests/auth_vectors.json, docs/AUTH_PROTOCOL.md) 검증용으로 공개한다.
+    public static byte[] ComputeMac(byte[] key, string side, int remotePort, byte[] serverNonce, byte[] clientNonce, byte[] ident)
+    {
         byte[] head = Encoding.ASCII.GetBytes("FTA1|" + side + "|" + remotePort.ToString() + "|");
         MemoryStream m = new MemoryStream();
         m.Write(head, 0, head.Length);

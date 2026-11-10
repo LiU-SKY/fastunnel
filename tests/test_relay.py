@@ -73,6 +73,17 @@ def run() -> bool:
         r.skip("중계기 전체", "윈도우 파워셸이 필요합니다")
         return r.summary()
 
+    # 테스트 벡터: relay.cs 의 MAC 이 명세(docs/AUTH_PROTOCOL.md)와 같은가
+    vec = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+         os.path.join(ROOT, "tests", "relay_vectors.ps1")],
+        capture_output=True, timeout=120,
+    )
+    lines = [ln for ln in vec.stdout.decode("utf-8", "replace").splitlines() if ln.startswith("VECTOR ")]
+    r.check("relay.cs MAC = 테스트 벡터 (%d개)" % len(lines),
+            len(lines) >= 3 and all(ln.endswith(" True") for ln in lines),
+            "; ".join(lines) or vec.stderr.decode("utf-8", "replace")[:200])
+
     fresh_registry()
     registry = auth.Registry()
     key = registry.add("relay-kim")
