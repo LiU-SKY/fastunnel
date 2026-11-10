@@ -26,11 +26,15 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def address_payload(tunnels: Sequence[Any], provider: str = "", note: str = "") -> Dict[str, Any]:
+def address_payload(tunnels: Sequence[Any], provider: str = "", note: str = "",
+                    exact_ports: bool = False) -> Dict[str, Any]:
     """클라이언트가 읽을 내용. 형식을 단순하게 유지한다.
 
     첫 번째 터널을 host/port 로 올려 두는 이유: 클라이언트가 흔한 경우에
     `tunnels` 배열을 뒤지지 않아도 되게 하려는 것이다.
+
+    `auth` 가 있으면 접속 도우미는 키(client.key)로 핸드셰이크를 한다. 키 자체는 여기 없다.
+    `exact_ports` 가 있으면 도우미는 포트를 옆 번호로 비키지 않는다(주소에 포트가 박힌 웹 앱용).
     """
     items: List[Dict[str, Any]] = []
     for tunnel in tunnels:
@@ -51,6 +55,7 @@ def address_payload(tunnels: Sequence[Any], provider: str = "", note: str = "") 
             "host": host,
             "status": tunnel.status,
             "client_hint": tunnel.client_hint(),
+            "auth": bool(getattr(tunnel, "auth", False)),
         })
 
     # 종료된 터널도 목록에는 남기되, online 판정에서는 뺀다.
@@ -63,6 +68,8 @@ def address_payload(tunnels: Sequence[Any], provider: str = "", note: str = "") 
         "online": bool(live),
         "note": note,
         "tunnels": items,
+        "auth": any(item["auth"] for item in items),
+        "exact_ports": bool(exact_ports),
     }
     if live:
         payload["host"] = live[0]["host"]

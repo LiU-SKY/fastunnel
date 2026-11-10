@@ -21,3 +21,8 @@ tunnels.json
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# 접속 키 (fastunnel client add 가 만든 것) - 출입증이므로 절대 커밋하지 않는다
+client.key
+clients.json
+fastunnel-client-*/
